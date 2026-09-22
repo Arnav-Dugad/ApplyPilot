@@ -1,0 +1,4 @@
+# Optional runtime integrations. The safety core uses only Python's standard library.
+playwright>=1.50,<2
+pypdf>=6,<7
+

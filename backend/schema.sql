@@ -1,0 +1,160 @@
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_facts (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  fact_key TEXT NOT NULL,
+  country_code TEXT,
+  value_json TEXT,
+  status TEXT NOT NULL CHECK(status IN ('VERIFIED','UNVERIFIED','UNKNOWN','EXPIRED')),
+  source TEXT NOT NULL,
+  date_added TEXT NOT NULL,
+  last_confirmed TEXT,
+  expires_at TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(category, fact_key, country_code)
+);
+
+CREATE TABLE IF NOT EXISTS answer_vault (
+  id TEXT PRIMARY KEY,
+  canonical_question TEXT NOT NULL,
+  normalized_pattern TEXT NOT NULL,
+  answer_type TEXT NOT NULL CHECK(answer_type IN ('EXACT','COUNTRY_SPECIFIC','COMPANY_SPECIFIC','ROLE_SPECIFIC','GENERATED_WITH_APPROVAL','MANUAL_ONLY')),
+  answer_json TEXT,
+  country_code TEXT,
+  company TEXT,
+  role_pattern TEXT,
+  status TEXT NOT NULL CHECK(status IN ('VERIFIED','UNVERIFIED','UNKNOWN','EXPIRED')),
+  source_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+  approved_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cvs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  variant TEXT NOT NULL,
+  original_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  is_original INTEGER NOT NULL DEFAULT 1,
+  approved INTEGER NOT NULL DEFAULT 0,
+  extracted_profile_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(original_id) REFERENCES cvs(id)
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  company TEXT,
+  role TEXT,
+  location TEXT,
+  country TEXT,
+  remote_status TEXT,
+  posting_url TEXT,
+  application_url TEXT,
+  source TEXT NOT NULL,
+  date_found TEXT NOT NULL,
+  date_posted TEXT,
+  deadline TEXT,
+  description TEXT NOT NULL DEFAULT '',
+  required_skills_json TEXT NOT NULL DEFAULT '[]',
+  preferred_skills_json TEXT NOT NULL DEFAULT '[]',
+  degree_requirements TEXT,
+  graduation_requirements TEXT,
+  experience_requirements TEXT,
+  work_authorization TEXT,
+  sponsorship_information TEXT,
+  duration TEXT,
+  start_date TEXT,
+  compensation TEXT,
+  application_platform TEXT,
+  requisition_id TEXT,
+  raw_snapshot TEXT NOT NULL DEFAULT '',
+  extraction_status TEXT NOT NULL DEFAULT 'UNVERIFIED',
+  UNIQUE(posting_url)
+);
+
+CREATE TABLE IF NOT EXISTS eligibility_results (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL UNIQUE,
+  result TEXT NOT NULL CHECK(result IN ('ELIGIBLE','LIKELY_ELIGIBLE','NEEDS_INFORMATION','INELIGIBLE')),
+  checks_json TEXT NOT NULL,
+  match_json TEXT NOT NULL,
+  recommended_cv_id TEXT,
+  evaluated_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(recommended_cv_id) REFERENCES cvs(id)
+);
+
+CREATE TABLE IF NOT EXISTS applications (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('ASSIST','REVIEW_BEFORE_SUBMIT','AUTO_SUBMIT_VERIFIED')),
+  dry_run INTEGER NOT NULL DEFAULT 1,
+  cv_id TEXT,
+  cover_letter_id TEXT,
+  field_state_json TEXT NOT NULL DEFAULT '[]',
+  automation_checkpoint_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  submitted_at TEXT,
+  FOREIGN KEY(job_id) REFERENCES jobs(id),
+  FOREIGN KEY(cv_id) REFERENCES cvs(id)
+);
+
+CREATE TABLE IF NOT EXISTS receipts (
+  id TEXT PRIMARY KEY,
+  application_id TEXT NOT NULL UNIQUE,
+  timestamp TEXT NOT NULL,
+  company TEXT NOT NULL,
+  role TEXT NOT NULL,
+  job_external_id TEXT,
+  application_url TEXT,
+  answers_json TEXT NOT NULL,
+  cv_version TEXT,
+  cover_letter_version TEXT,
+  confirmation_text TEXT,
+  confirmation_number TEXT,
+  screenshot_path TEXT,
+  FOREIGN KEY(application_id) REFERENCES applications(id)
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp TEXT NOT NULL,
+  level TEXT NOT NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS fact_dependencies (
+  fact_id TEXT NOT NULL,
+  dependent_type TEXT NOT NULL,
+  dependent_id TEXT NOT NULL,
+  fact_revision INTEGER NOT NULL,
+  PRIMARY KEY(fact_id, dependent_type, dependent_id),
+  FOREIGN KEY(fact_id) REFERENCES profile_facts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_company_role ON jobs(company, role);
+CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
+CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(timestamp DESC);
+

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.vite/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+data/*.db
+data/*.db-*
+data/uploads/
+playwright-report/
+test-results/
+.env
+.codex/
+src-tauri/target/
