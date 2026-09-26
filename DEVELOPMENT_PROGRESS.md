@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-27
 
+## Completed in 0.3 (Autopilot)
+
+- Autopilot: scheduled discovery from Greenhouse, Lever, Ashby, and SmartRecruiters public feeds; curated company catalogue; location and internship filters; auto-queue above a score bar; form pre-checks; notifications; live run timeline.
+- Transparent 0-100 match score; 150-skill taxonomy with aliases, ambiguity rules, and related-skill partial credit; employer names never count as skills.
+- Real Greenhouse application questions fetched and resolved before any browser opens.
+- Inbox: grouped questions answered once for all applications; CV-derived profile suggestions with evidence; AI drafts to review.
+- Resolver: first/last name from unambiguous legal names, fuzzy Answer Vault reuse with an employer guard, option-aware selects, date-aware options, credential fields never filled, résumé upload.
+- Live fill in the user's Edge window via Playwright over CDP; fields outlined green/amber; never submits.
+- Optional local AI (Ollama): model detection and one-click download, job summaries, cover letters, answer drafts with unverified-skill flags and placeholder gating.
+- UI: Autopilot command centre, Inbox, job drawer, animated score rings and counters, orb, confetti, notifications, page transitions, job search in the palette.
+- Tests: 67 backend tests including a full Autopilot pipeline against a fake board and the Ollama protocol against a fake server.
+
 ## Completed in 0.2 (first downloadable release)
 
 - Windows desktop app: single-process launcher (`backend/desktop.py`) with a native WebView2 window, PyInstaller bundle, per-user Inno Setup installer, portable zip, and a tag-triggered GitHub Actions release workflow.
@@ -44,7 +56,8 @@ This build environment returns HTTP 403 for public npm and PyPI registries and d
 5. Capture successful confirmation receipts.
 6. Add Ollama health/model discovery and strict schema validation.
 7. Code-sign the Windows installer.
-8. Wire the Playwright browser runner to the queue behind the existing pause rules.
+8. Per-ATS adapters for custom widgets (Workday, Ashby React selects) in live fill.
+9. Auto-submit, only as an explicit per-application opt-in after a final review screen.
 
 ## Non-negotiable boundary
 

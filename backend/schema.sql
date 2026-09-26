@@ -158,3 +158,66 @@ CREATE INDEX IF NOT EXISTS idx_jobs_company_role ON jobs(company, role);
 CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status);
 CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(timestamp DESC);
 
+
+-- v0.3: Autopilot, discovery, suggestions, drafts, notifications
+CREATE TABLE IF NOT EXISTS watchlist (
+  id TEXT PRIMARY KEY,
+  platform TEXT NOT NULL CHECK(platform IN ('GREENHOUSE','LEVER','ASHBY','SMARTRECRUITERS')),
+  slug TEXT NOT NULL,
+  company TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_scanned_at TEXT,
+  last_status TEXT,
+  jobs_seen INTEGER NOT NULL DEFAULT 0,
+  internships_seen INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(platform, slug)
+);
+
+CREATE TABLE IF NOT EXISTS autopilot_runs (
+  id TEXT PRIMARY KEY,
+  trigger TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('RUNNING','COMPLETED','FAILED')),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  events_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS suggestions (
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  category TEXT NOT NULL,
+  fact_key TEXT NOT NULL,
+  value_json TEXT,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  evidence TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','ACCEPTED','DISMISSED')),
+  created_at TEXT NOT NULL,
+  UNIQUE(category, fact_key, value_json)
+);
+
+CREATE TABLE IF NOT EXISTS drafts (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('COVER_LETTER','ANSWER','SUMMARY')),
+  job_id TEXT,
+  question TEXT,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','APPROVED')),
+  model TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  page TEXT,
+  read INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read, id DESC);
+CREATE INDEX IF NOT EXISTS idx_drafts_job ON drafts(job_id, kind);

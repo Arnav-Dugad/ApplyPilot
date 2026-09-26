@@ -17,17 +17,25 @@ Your data lives in `%LOCALAPPDATA%\ApplyPilot` (database, imported CVs). Uninsta
 
 ## What it does
 
-- **First-run safety wizard** that captures only the facts you confirm.
-- **Truth Layer profile** with `VERIFIED`, `UNVERIFIED`, `UNKNOWN`, and `EXPIRED` states. Every fact can be edited inline, and the autofill-readiness meter shows which common form fields are covered.
-- **Work authorization and sponsorship per country**. Answers are never copied across borders, and country names and codes are matched (`UK` = `GB` = `United Kingdom`).
-- **Discover**: import public job URLs (JSON-LD aware, SSRF-protected including redirects), or add jobs manually when a site blocks import. Eligibility results are saved, filterable and ranked.
-- **Deterministic eligibility**: degree, work authorization, sponsorship wording, and required-skill coverage, each with a PASS/FAIL/UNKNOWN explanation.
-- **Queue**: dry-run a form and see, field by field, what would be filled (with its source fact) and what pauses (with the reason). Pre-submission validation lists every blocking check.
-- **CV Library** with immutable originals, duplicate detection, and explicit approval. Only approved CVs are attached to applications.
-- **Tracker** board (in progress → applied → interviewing → offer → closed), **Answer Vault** for scoped reusable answers, **Analytics**, and a filterable **Activity** audit log.
-- Dark and light themes, `Ctrl+K` command palette.
+**Autopilot: your application engine.** Follow companies (one click from a built-in catalogue, or paste any Greenhouse, Lever, Ashby, or SmartRecruiters careers link). On a schedule, Autopilot:
 
-Automated submission is deliberately not implemented. See [DEVELOPMENT_PROGRESS.md](DEVELOPMENT_PROGRESS.md) for the exact boundary.
+1. scans their official public job boards for internships in your preferred locations;
+2. scores every job 0–100 against your verified profile, with a breakdown of every point (skills with partial credit for related skills, location, internship fit, freshness, deadline);
+3. queues the best eligible matches above your score bar;
+4. pre-checks each application form. For Greenhouse jobs it reads the **real application questions** before you open a browser;
+5. sends everything it can't answer to your **Inbox**, grouped, so one answer unlocks every application that asks it.
+
+**Fill in Edge.** One click opens the real application in your own Edge window, fills every field it has a verified answer for (including attaching your approved CV), outlines what still needs you in amber, and stops. **You press submit.**
+
+**More intelligence, never guessing:**
+- **CV reading:** upload a PDF and ApplyPilot suggests your name, contact links, university, degree, graduation date, and skills, each with the line it came from. Nothing is verified until you accept it.
+- **Smart answers:** approved answers are reused on reworded questions. Answers about one employer never leak to another. Dropdowns only ever receive one of their own options, and a verified `2027-05` picks "May 2027" and nothing else. Passwords are never stored or filled.
+- **Local AI (optional):** with Ollama installed, ApplyPilot writes job summaries, cover letters, and answer drafts on your computer. Drafts use only verified facts, flag skills you haven't verified, and can't be approved while `[placeholders]` remain.
+- **Per-country truth:** work authorization and sponsorship are answered per country and never cross borders (`UK` = `GB` = `United Kingdom`). Countries are inferred from locations like "London, UK".
+
+Also included: a job detail drawer, Tracker board (with confetti for offers), CV Library, Answer Vault, Analytics, Activity audit log, notifications, a `Ctrl+K` palette that searches jobs, and dark/light themes.
+
+Automated *submission* is deliberately not implemented: ApplyPilot fills and validates, you submit.
 
 ## Safe defaults
 
@@ -61,7 +69,7 @@ npm run desktop
 Tests:
 
 ```powershell
-npm run test:all     # vitest + 41 backend safety/API tests
+npm run test:all     # vitest + 67 backend tests
 npm run check        # typecheck + build + all tests
 ```
 
@@ -92,7 +100,7 @@ Bump the version in both `package.json` and `backend/__init__.py` first. The bui
 ## Project layout
 
 - `src/`: React/TypeScript UI (`pages/` for screens, `ui.tsx` for shared components).
-- `backend/`: local HTTP service, SQLite, parsers, safety engine, eligibility, automation contracts, and `desktop.py` (native window launcher).
+- `backend/`: local HTTP service (`server.py`), services and Autopilot (`service.py`), job-board discovery, scoring, skills taxonomy, CV reader, local AI client, live Edge filler (`browser_runner.py`), safety engine, and `desktop.py` (native window launcher).
 - `backend/tests/`: safety, eligibility, country, and API tests.
 - `packaging/`: PyInstaller spec, Inno Setup installer script, icon, and `build.ps1`.
 - `docs/fixtures/`: mock ATS forms for adapter testing.

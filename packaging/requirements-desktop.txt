@@ -2,3 +2,4 @@
 pyinstaller>=6.10,<7
 pywebview>=5.3,<7
 pypdf>=6,<7
+playwright>=1.50,<2

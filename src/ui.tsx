@@ -1,9 +1,10 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { Activity as ActivityIcon, BriefcaseBusiness, ChevronRight, Sparkles } from 'lucide-react'
+import { ScoreRing } from './motion'
 import type { Activity, Bootstrap, EligibilityResult, Job } from './types'
 
-export type Page = 'Home' | 'Discover' | 'Queue' | 'Tracker' | 'CV Library' | 'Profile' | 'Answer Vault' | 'Analytics' | 'Activity' | 'Settings'
-export type PageProps = { data: Bootstrap; refresh: () => Promise<void>; go: (page: Page) => void }
+export type Page = 'Home' | 'Autopilot' | 'Inbox' | 'Discover' | 'Queue' | 'Tracker' | 'CV Library' | 'Profile' | 'Answer Vault' | 'Analytics' | 'Activity' | 'Settings'
+export type PageProps = { data: Bootstrap; refresh: () => Promise<void>; go: (page: Page) => void; openJob: (id: string) => void }
 export type Tone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {
@@ -26,7 +27,7 @@ export function Empty({ icon: Icon, title, text, action, actionLabel = 'Get star
 
 export function JobRow({ job, onClick }: { job: Job; onClick?: () => void }) {
   return <div className={`job-row ${onClick ? 'clickable' : ''}`} onClick={onClick}>
-    <div className="company-mark">{(job.company || '?').slice(0, 1).toUpperCase()}</div>
+    <ScoreRing score={job.score?.score} size={38} />
     <div><b>{job.role || 'Role needs review'}</b><span>{job.company || 'Company unknown'} · {job.location || 'Location unknown'}</span></div>
     <div className="tags">{job.eligibility_result ? <Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge> : <Badge>Not analyzed</Badge>}<Badge tone="accent">{job.application_platform || 'GENERIC'}</Badge></div>
     <ChevronRight size={18} />
@@ -48,7 +49,7 @@ const ELIGIBILITY: Record<EligibilityResult, [string, Tone, number]> = {
 }
 export const eligibilityLabel = (r?: EligibilityResult | null) => r ? ELIGIBILITY[r]?.[0] ?? r : 'Not analyzed'
 export const eligibilityTone = (r?: EligibilityResult | null): Tone => r ? ELIGIBILITY[r]?.[1] ?? 'neutral' : 'neutral'
-export const eligibilityRank = (job: Job) => (job.eligibility_result ? ELIGIBILITY[job.eligibility_result]?.[2] ?? 3 : 3) - (job.eligibility_match?.required_coverage ?? 0) / 1000
+export const eligibilityRank = (job: Job) => (job.eligibility_result ? ELIGIBILITY[job.eligibility_result]?.[2] ?? 3 : 3) - (job.score?.score ?? job.eligibility_match?.required_coverage ?? 0) / 1000
 
 export const STATUS_LABELS: Record<string, string> = {
   QUEUED: 'Queued', NEEDS_INFO: 'Needs info', WAITING_FOR_USER: 'Waiting for you', READY_FOR_REVIEW: 'Ready for review',
@@ -107,4 +108,12 @@ export function useAction(refresh: () => Promise<void>) {
     }
   }
   return { run, busy }
+}
+
+export function relativeTime(iso: string) {
+  const diff = (new Date(iso).getTime() - Date.now()) / 1000
+  const abs = Math.abs(diff)
+  const [value, unit] = abs < 45 ? [0, 'second'] : abs < 3600 ? [Math.round(diff / 60), 'minute'] : abs < 86400 ? [Math.round(diff / 3600), 'hour'] : [Math.round(diff / 86400), 'day']
+  if (unit === 'second') return diff >= 0 ? 'in a moment' : 'just now'
+  return new Intl.RelativeTimeFormat([], { numeric: 'auto' }).format(value, unit as Intl.RelativeTimeFormatUnit)
 }

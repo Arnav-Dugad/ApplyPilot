@@ -3,16 +3,17 @@ import { FileText, Upload } from 'lucide-react'
 import { api, readFileBase64 } from '../api'
 import { Badge, Empty, PageHeading, formatDate, useAction, type PageProps } from '../ui'
 
-export function CVLibrary({ data, refresh }: PageProps) {
+export function CVLibrary({ data, refresh, go }: PageProps) {
   const { run, busy } = useAction(refresh)
   const input = useRef<HTMLInputElement>(null)
   const upload = async (file?: File) => {
     if (!file) return
-    await run('upload', async () => api.importCV(file.name, await readFileBase64(file)), `${file.name} imported — review and approve it`)
+    const result = await run('upload', async () => api.importCV(file.name, await readFileBase64(file)), r => r.suggestions ? `${file.name} read — ${r.suggestions} profile suggestions waiting in your Inbox` : `${file.name} imported — review and approve it`)
+    if (result?.suggestions) go('Inbox')
     if (input.current) input.current.value = ''
   }
   return <>
-    <PageHeading eyebrow="CV Library" title="Your CVs" text="Originals stay immutable. Only approved CVs are attached to applications.">
+    <PageHeading eyebrow="CV Library" title="Your CVs" text="Upload a PDF and ApplyPilot reads it into profile suggestions. Only approved CVs are attached to applications.">
       <button className="button primary" disabled={busy === 'upload'} onClick={() => input.current?.click()}><Upload size={16} /> {busy === 'upload' ? 'Importing…' : 'Upload PDF'}</button>
       <input ref={input} type="file" accept="application/pdf" hidden onChange={e => upload(e.target.files?.[0])} />
     </PageHeading>

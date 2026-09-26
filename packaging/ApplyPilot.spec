@@ -10,8 +10,8 @@ a = Analysis(
         (str(ROOT / "dist"), "dist"),
         (str(ROOT / "backend" / "schema.sql"), "backend"),
     ],
-    hiddenimports=["backend.server", "pypdf"],
-    excludes=["tkinter", "playwright", "backend.tests"],
+    hiddenimports=["backend.server", "backend.browser_runner", "pypdf", "playwright.sync_api"],
+    excludes=["tkinter", "backend.tests"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

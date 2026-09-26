@@ -60,12 +60,14 @@ def _log_crash() -> Path:
 
 def main() -> None:
     from .server import create_server, static_dir
+    from .service import AUTOPILOT
 
     if static_dir() is None:
         raise SystemExit("The ApplyPilot UI is missing. Run `npm run build` first.")
     server = create_server("127.0.0.1", 0)
     url = f"http://127.0.0.1:{server.server_port}"
     threading.Thread(target=server.serve_forever, name="applypilot-service", daemon=True).start()
+    AUTOPILOT.start_scheduler()
     _wait_until_ready(url)
     try:
         if not _native_window(url) and not _edge_app_window(url, data_dir() / "edge-profile"):
