@@ -13,7 +13,7 @@ STATIC = Path(TEMP.name) / "dist"
 STATIC.mkdir()
 (STATIC / "index.html").write_text("<!doctype html><title>ApplyPilot</title>", encoding="utf-8")
 (STATIC / "app.js").write_text("console.log('ok')", encoding="utf-8")
-os.environ["APPLYPILOT_DB"] = str(Path(TEMP.name) / "server.db")
+os.environ.setdefault("APPLYPILOT_DB", str(Path(TEMP.name) / "server.db"))
 os.environ["APPLYPILOT_STATIC"] = str(STATIC)
 
 from backend import server  # noqa: E402  (environment must be set before the module opens its database)

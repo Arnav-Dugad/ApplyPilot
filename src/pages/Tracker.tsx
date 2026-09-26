@@ -1,5 +1,6 @@
 import { ExternalLink, Gauge } from 'lucide-react'
 import { api } from '../api'
+import { burstConfetti } from '../motion'
 import type { Application } from '../types'
 import { ACTIVE_STATUSES, Empty, PageHeading, STATUS_LABELS, formatDate, useAction, type PageProps } from '../ui'
 
@@ -12,16 +13,19 @@ const COLUMNS: [string, string[]][] = [
 ]
 const MOVES = ['QUEUED', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'WITHDRAWN']
 
-export function Tracker({ data, refresh, go }: PageProps) {
+export function Tracker({ data, refresh, go, openJob }: PageProps) {
   const { run } = useAction(refresh)
-  const move = (app: Application, status: string) => run(`move-${app.id}`, () => api.setStatus(app.id, status), `${app.company || 'Application'} → ${STATUS_LABELS[status]}`)
+  const move = async (app: Application, status: string) => {
+    const done = await run(`move-${app.id}`, () => api.setStatus(app.id, status), status === 'OFFER' ? `An offer from ${app.company || 'them'} — congratulations!` : `${app.company || 'Application'} → ${STATUS_LABELS[status]}`)
+    if (done && status === 'OFFER') burstConfetti()
+  }
   return <>
     <PageHeading eyebrow="Tracker" title="Every application, saved to offer" text="Move cards as you hear back. Dates are recorded in your activity log." />
     {data.applications.length ? <div className="board">{COLUMNS.map(([title, statuses]) => {
       const apps = data.applications.filter(a => statuses.includes(a.status))
       return <section key={title} className="board-column"><header><b>{title}</b><em>{apps.length}</em></header>
-        {apps.map(app => <article key={app.id} className="board-card">
-          <b>{app.role || 'Role'}</b>
+        {apps.map(app => <article key={app.id} className={`board-card ${app.status === 'OFFER' ? 'offer' : ''}`}>
+          <button className="link-title" onClick={() => openJob(app.job_id)}><b>{app.role || 'Role'}</b></button>
           <span>{app.company || 'Company'}{app.location ? ` · ${app.location}` : ''}</span>
           <small>{app.submitted_at ? `Applied ${formatDate(app.submitted_at)}` : `Updated ${formatDate(app.updated_at)}`}</small>
           <footer>

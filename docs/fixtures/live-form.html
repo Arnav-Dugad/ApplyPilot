@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Acme — Software Engineer Intern</title></head>
+<body>
+<h1>Software Engineer Intern</h1>
+<form id="application" onsubmit="document.body.dataset.submitted='yes'; return false">
+  <div class="application-question"><label>Full name ✱<input name="name" required></label></div>
+  <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="phone">Phone</label><input id="phone" name="phone"></div>
+  <div class="field"><label for="resume">Resume/CV</label><input id="resume" name="resume" type="file" required></div>
+  <div class="field"><label for="linkedin">LinkedIn Profile</label><input id="linkedin" name="urls[LinkedIn]"></div>
+  <fieldset class="application-question"><legend>Are you legally authorized to work in the United Kingdom?</legend>
+    <label><input type="radio" name="auth" value="yes" required> Yes</label>
+    <label><input type="radio" name="auth" value="no"> No</label>
+  </fieldset>
+  <div class="field"><label for="sponsor">Will you now or in the future require visa sponsorship?</label>
+    <select id="sponsor" name="sponsor" required><option value="">Select…</option><option>Yes</option><option>No</option></select></div>
+  <div class="field"><label for="why">Why do you want to work at Acme?</label><textarea id="why" name="why" required></textarea></div>
+  <div class="field"><label for="pw">Portfolio password</label><input id="pw" name="pw" type="password"></div>
+  <button type="submit">Submit application</button>
+</form>
+</body></html>

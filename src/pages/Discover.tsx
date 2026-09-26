@@ -4,11 +4,12 @@ import { api } from '../api'
 import type { EligibilityResult, Job } from '../types'
 import { Badge, Empty, JobRow, PageHeading, eligibilityLabel, eligibilityRank, eligibilityTone, useAction, type PageProps } from '../ui'
 
-type Filter = 'ALL' | EligibilityResult | 'UNANALYZED'
-const FILTERS: [Filter, string][] = [['ALL', 'All'], ['ELIGIBLE', 'Eligible'], ['LIKELY_ELIGIBLE', 'Likely'], ['NEEDS_INFORMATION', 'Needs info'], ['INELIGIBLE', 'Ineligible'], ['UNANALYZED', 'Not analyzed']]
+type Filter = 'ALL' | 'TOP' | EligibilityResult | 'UNANALYZED'
+const FILTERS: [Filter, string][] = [['ALL', 'All'], ['TOP', 'Top matches'], ['ELIGIBLE', 'Eligible'], ['LIKELY_ELIGIBLE', 'Likely'], ['NEEDS_INFORMATION', 'Needs info'], ['INELIGIBLE', 'Ineligible'], ['UNANALYZED', 'Not analyzed']]
 const blankJob = { company: '', role: '', location: '', country: '', posting_url: '', description: '' }
 
-export function Discover({ data, refresh, go }: PageProps) {
+export function Discover({ data, refresh, go, openJob }: PageProps) {
+  const matches = (j: Job, key: Filter) => key === 'ALL' || (key === 'TOP' ? (j.score?.score ?? 0) >= 80 : key === 'UNANALYZED' ? !j.eligibility_result : j.eligibility_result === key)
   const { run, busy } = useAction(refresh)
   const [url, setUrl] = useState('')
   const [manual, setManual] = useState<typeof blankJob | null>(null)
@@ -17,21 +18,21 @@ export function Discover({ data, refresh, go }: PageProps) {
   const queued = useMemo(() => new Set(data.applications.map(a => a.job_id)), [data.applications])
 
   const jobs = useMemo(() => data.jobs
-    .filter(j => filter === 'ALL' || (filter === 'UNANALYZED' ? !j.eligibility_result : j.eligibility_result === filter))
+    .filter(j => matches(j, filter))
     .filter(j => !query || `${j.company} ${j.role} ${j.location} ${j.required_skills.join(' ')}`.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => eligibilityRank(a) - eligibilityRank(b)), [data.jobs, filter, query])
 
   const importJob = async () => {
     const job = await run('import', () => api.importJob(url.trim()), j => `Imported ${j.role || 'job'}${j.company ? ` at ${j.company}` : ''}`)
-    if (job) { setUrl(''); await run(`analyze-${job.id}`, () => api.analyzeJob(job.id)) }
+    if (job) { setUrl(''); await run(`analyze-${job.id}`, () => api.analyzeJob(job.id)); openJob(job.id) }
     else setManual({ ...blankJob, posting_url: url.trim() })
   }
   const saveManual = async () => {
     if (!manual) return
     const job = await run('manual', () => api.manualJob(manual), 'Job added')
-    if (job) { setManual(null); setUrl(''); await run(`analyze-${job.id}`, () => api.analyzeJob(job.id)) }
+    if (job) { setManual(null); setUrl(''); openJob(job.id) }
   }
-  const analyzeAll = () => run('analyze-all', async () => { for (const job of data.jobs) await api.analyzeJob(job.id) }, `Analyzed ${data.jobs.length} jobs against your verified profile`)
+  const analyzeAll = () => run('analyze-all', () => api.analyzeAll(), r => `Re-scored ${r.analyzed} jobs against your verified profile`)
 
   return <>
     <PageHeading eyebrow="Discovery" title="Find a role worth applying to" text="Public pages only. Blocked or protected pages fall back to manual entry.">
@@ -53,19 +54,20 @@ export function Discover({ data, refresh, go }: PageProps) {
     </section>}
 
     <section className="panel"><div className="panel-head"><div><h2>Imported internships</h2><p>Extracted facts remain unverified until reviewed.</p></div><Badge>{data.jobs.length} total</Badge></div>
-      {data.jobs.length > 0 && <div className="toolbar"><div className="chips">{FILTERS.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}<em>{key === 'ALL' ? data.jobs.length : data.jobs.filter(j => key === 'UNANALYZED' ? !j.eligibility_result : j.eligibility_result === key).length}</em></button>)}</div><input className="search-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by company, role, skill…" /></div>}
-      {jobs.length ? <div className="job-cards">{jobs.map(job => <JobCard key={job.id} job={job} queued={queued.has(job.id)} busy={busy} onAnalyze={() => run(`analyze-${job.id}`, () => api.analyzeJob(job.id), r => `${job.company || 'Job'}: ${eligibilityLabel(r.result)}`)} onQueue={() => run(`queue-${job.id}`, () => api.queueJob(job.id), 'Added to queue')} onDelete={() => confirm(`Delete ${job.role || 'this job'}${job.company ? ` at ${job.company}` : ''}?`) && run(`delete-${job.id}`, () => api.deleteJob(job.id), 'Job removed')} onOpenQueue={() => go('Queue')} />)}</div>
+      {data.jobs.length > 0 && <div className="toolbar"><div className="chips">{FILTERS.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}<em>{data.jobs.filter(j => matches(j, key)).length}</em></button>)}</div><input className="search-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter by company, role, skill…" /></div>}
+      {jobs.length ? <div className="job-cards stagger">{jobs.map(job => <JobCard key={job.id} job={job} queued={queued.has(job.id)} busy={busy} onAnalyze={() => run(`analyze-${job.id}`, () => api.analyzeJob(job.id), r => `${job.company || 'Job'}: ${eligibilityLabel(r.result)}`)} onQueue={() => run(`queue-${job.id}`, () => api.queueJob(job.id), 'Added to queue')} onDelete={() => confirm(`Delete ${job.role || 'this job'}${job.company ? ` at ${job.company}` : ''}?`) && run(`delete-${job.id}`, () => api.deleteJob(job.id), 'Job removed')} onOpenQueue={() => go('Queue')} onOpen={() => openJob(job.id)} />)}</div>
         : data.jobs.length ? <Empty icon={Search} title="No jobs match this filter" text="Try another filter or clear the search." />
         : <Empty icon={Search} title="Paste your first internship" text="ApplyPilot will extract only what the page actually says." />}
     </section>
   </>
 }
 
-function JobCard({ job, queued, busy, onAnalyze, onQueue, onDelete, onOpenQueue }: { job: Job; queued: boolean; busy: string | null; onAnalyze: () => void; onQueue: () => void; onDelete: () => void; onOpenQueue: () => void }) {
+function JobCard({ job, queued, busy, onAnalyze, onQueue, onDelete, onOpenQueue, onOpen }: { job: Job; queued: boolean; busy: string | null; onAnalyze: () => void; onQueue: () => void; onDelete: () => void; onOpenQueue: () => void; onOpen: () => void }) {
   const match = job.eligibility_match
   const skills = [...job.required_skills, ...job.preferred_skills]
   return <article className="job-card">
-    <JobRow job={job} />
+    <JobRow job={job} onClick={onOpen} />
+    {job.ai_summary && <p className="ai-line">✦ {job.ai_summary.summary}</p>}
     <p>{job.description.slice(0, 260) || 'No description was extracted. Add details manually; ApplyPilot will not fabricate them.'}</p>
     <div className="skill-line">{skills.slice(0, 9).map(s => <Badge key={s} tone={match?.strong.includes(s) ? 'good' : match?.missing.includes(s) ? 'bad' : 'neutral'}>{s}</Badge>)}</div>
     {job.eligibility_result && <div className="analysis-box">

@@ -28,3 +28,11 @@ Submission is a separate capability gate. A valid form alone is insufficient: ac
 
 New ATS systems implement the `ATSAdapter` contract. AI providers implement a future provider interface that returns validated schemas. Discovery sources feed only normalized job records. Email and calendar modules consume events without modifying profile truth.
 
+
+## Autopilot (v0.3)
+
+`service.Autopilot` runs on a background thread while the app is open: `discovery.fetch_board` (public ATS JSON feeds) → `save_job` (skills, requirement sentences, country inferred from location) → `eligibility.evaluate` + `scoring.score` → `queue_job` (eligible, above the user's score bar) → `prepare_application` (real Greenhouse questions, or a standard form) → Inbox. Every step is appended to `autopilot_runs.events_json`, which the UI polls as a live timeline.
+
+`browser_runner.live_fill` starts a dedicated Edge profile with a loopback debugging port, attaches with Playwright over CDP, scans fields with a read-only script, fills only `FILL` decisions, and disconnects, leaving the window open. It has no code path that finds or clicks submit.
+
+`ai.py` talks to a local Ollama server with JSON-schema constrained output. Job text is wrapped as untrusted data, prompts include only verified non-contact facts, and outputs become drafts, never facts.

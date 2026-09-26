@@ -15,6 +15,30 @@ ROOT = Path(__file__).resolve().parents[1]
 VALID_FACT_STATUS = {"VERIFIED", "UNVERIFIED", "UNKNOWN", "EXPIRED"}
 
 
+# Columns added after the first release; applied idempotently on startup.
+COLUMN_MIGRATIONS = [
+    ("jobs", "external_id", "TEXT"),
+    ("jobs", "board_questions_json", "TEXT"),
+    ("jobs", "ai_summary_json", "TEXT"),
+    ("jobs", "employment_type", "TEXT"),
+    ("eligibility_results", "score_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("applications", "prep_source", "TEXT"),
+    ("applications", "browser_run_json", "TEXT NOT NULL DEFAULT '{}'"),
+]
+
+AUTOPILOT_DEFAULTS = {
+    "enabled": False,
+    "interval_hours": 6,
+    "min_score": 60,
+    "auto_queue": True,
+    "auto_prepare": True,
+    "location_filter": True,
+    "internships_only": True,
+    "ai_summaries": True,
+    "ai_cover_letters": False,
+}
+
+
 def data_dir() -> Path:
     """Where the database and uploads live. Packaged builds use the per-user app data folder."""
     if os.environ.get("APPLYPILOT_DATA_DIR"):
@@ -54,6 +78,10 @@ class Database:
         with self._lock, self.connect() as conn:
             conn.executescript(schema)
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)", (now(),))
+            for table, column, ddl in COLUMN_MIGRATIONS:
+                if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)", (now(),))
             defaults = {
                 "strict_accuracy_mode": True,
                 "dry_run": True,
@@ -61,6 +89,7 @@ class Database:
                 "automation_mode": "REVIEW_BEFORE_SUBMIT",
                 "ollama": {"provider": "OFF", "endpoint": "http://localhost:11434", "model": None},
                 "first_run_complete": False,
+                "autopilot": AUTOPILOT_DEFAULTS,
             }
             for key, value in defaults.items():
                 conn.execute("INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES(?,?,?)", (key, json.dumps(value), now()))

@@ -5,17 +5,9 @@ import re
 from typing import Any
 
 from .countries import same_country
+from .skills import canonical, find_skills, related_credit
 
-SKILL_ALIASES = {
-    "js": "javascript", "ts": "typescript", "postgres": "postgresql",
-    "machine learning": "ml", "artificial intelligence": "ai",
-    "spring boot": "spring", "amazon web services": "aws",
-}
-
-
-def canonical(value: str) -> str:
-    value = value.strip().lower()
-    return SKILL_ALIASES.get(value, value)
+PREFERRED_MARKERS = ("preferred", "nice to have", "nice-to-have", "bonus", "a plus", "is a plus", "desirable", "ideally")
 
 
 def _value(row: dict[str, Any]) -> Any:
@@ -50,6 +42,7 @@ def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]
     strong = sorted(set(required + preferred) & skills)
     missing = sorted(set(required) - skills)
     partial = sorted(s for s in preferred if s not in skills)
+    related = sorted(s for s in missing if related_credit(s, skills))
     checks: list[dict[str, str]] = []
 
     degree_req = job.get("degree_requirements")
@@ -78,15 +71,15 @@ def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]
     unknown = any(c["result"] == "UNKNOWN" for c in checks)
     result = "INELIGIBLE" if definite_fail else "NEEDS_INFORMATION" if unknown else "ELIGIBLE" if not missing else "LIKELY_ELIGIBLE"
     coverage = round(100 * len(set(required) & skills) / len(set(required)), 0) if required else None
-    return {"result": result, "checks": checks, "match": {"strong": strong, "partial": partial, "missing": missing, "required_coverage": coverage}}
+    # Related skills (e.g. MySQL for PostgreSQL) earn half credit in ranking only, never in eligibility.
+    weighted = round(100 * (len(set(required) & skills) + 0.5 * len(related)) / len(set(required)), 0) if required else None
+    return {"result": result, "checks": checks, "match": {"strong": strong, "partial": partial, "missing": missing, "related": related, "required_coverage": coverage, "weighted_coverage": weighted}}
 
 
 def extract_skills(description: str) -> tuple[list[str], list[str]]:
-    known = ["java", "python", "javascript", "typescript", "react", "node.js", "sql", "postgresql", "aws", "azure", "git", "docker", "kubernetes", "c++", "machine learning", "data structures", "rest api"]
-    lowered = description.lower()
-    found = [skill for skill in known if re.search(r"(?<![\w+])" + re.escape(skill) + r"(?!\w)", lowered)]
-    preferred_markers = ("preferred", "nice to have", "bonus")
-    sentences = re.split(r"(?<=[.!?;])\s+|\n+", lowered)
-    preferred = [s for s in found if any(s in sentence and any(marker in sentence for marker in preferred_markers) for sentence in sentences)]
+    """Required vs preferred skills, decided by the sentence each skill appears in."""
+    found = find_skills(description)
+    sentences = re.split(r"(?<=[.!?;])\s+|\n+", description)
+    preferred = [s for s in found if all(any(m in sentence.lower() for m in PREFERRED_MARKERS) for sentence in sentences if s in find_skills(sentence))]
     required = [s for s in found if s not in preferred]
     return required, preferred

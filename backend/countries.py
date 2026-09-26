@@ -33,6 +33,12 @@ COUNTRY_NAMES = {
     "SE": ("sweden",),
     "SG": ("singapore",),
     "US": ("united states", "united states of america", "usa", "america"),
+    "AT": ("austria",), "BE": ("belgium",), "BG": ("bulgaria",), "BR": ("brazil",), "CN": ("china",), "CY": ("cyprus",),
+    "CZ": ("czech republic", "czechia"), "EE": ("estonia",), "EG": ("egypt",), "GR": ("greece",), "HR": ("croatia",),
+    "HU": ("hungary",), "ID": ("indonesia",), "IL": ("israel",), "IS": ("iceland",), "JO": ("jordan",), "KR": ("south korea", "korea"),
+    "LB": ("lebanon",), "LT": ("lithuania",), "LU": ("luxembourg",), "LV": ("latvia",), "MT": ("malta",), "MX": ("mexico",),
+    "MY": ("malaysia",), "PH": ("philippines",), "PK": ("pakistan",), "RO": ("romania",), "SI": ("slovenia",), "SK": ("slovakia",),
+    "TR": ("turkey", "turkiye"), "TW": ("taiwan",), "VN": ("vietnam",), "ZA": ("south africa",), "TH": ("thailand",), "NG": ("nigeria",),
 }
 _LOOKUP = {name: code for code, names in COUNTRY_NAMES.items() for name in names}
 
