@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .countries import same_country
 from .safety import classify_field, decide_fill
 
 
@@ -66,14 +67,14 @@ def resolve_field(field: DetectedField, facts: list[dict[str, Any]], country: st
     if classification in {"WORK_AUTHORIZATION", "SPONSORSHIP"}:
         key = "authorized" if classification == "WORK_AUTHORIZATION" else "requires_sponsorship"
         category = "work_authorization" if classification == "WORK_AUTHORIZATION" else "sponsorship"
-        match = next((f for f in facts if f["category"] == category and f["fact_key"] == key and f.get("country_code") == country), None)
+        match = next((f for f in facts if f["category"] == category and f["fact_key"] == key and same_country(f.get("country_code"), country)), None)
     else:
         mapping = FACT_MAPPING.get(classification)
         match = next((f for f in facts if mapping and (f["category"], f["fact_key"]) == mapping), None)
     if match and "value" not in match and "value_json" in match:
         match = dict(match)
         match["value"] = json.loads(match["value_json"])
-    matching_answer = next((a for a in (answers or []) if a.get("status") == "VERIFIED" and a.get("normalized_pattern") == " ".join(field.label.lower().split()) and (not a.get("country_code") or a.get("country_code") == country)), None)
+    matching_answer = next((a for a in (answers or []) if a.get("status") == "VERIFIED" and a.get("normalized_pattern") == " ".join(field.label.lower().split()) and (not a.get("country_code") or same_country(a.get("country_code"), country))), None)
     if matching_answer and not match:
         match = {"category": "Answer Vault", "fact_key": matching_answer.get("canonical_question", field.label), "value": matching_answer.get("answer"), "status": matching_answer.get("status")}
     manual_only = classification in {"LEGAL", "DEMOGRAPHIC", "CUSTOM"} and not matching_answer

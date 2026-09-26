@@ -1,7 +1,7 @@
 {
   "name": "applypilot",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,9 @@
     "test": "vitest run",
     "test:backend": "python3 -m unittest discover -s backend/tests -v",
     "test:all": "npm run test && npm run test:backend",
-    "check": "npm run build && npm run test:all"
+    "check": "npm run build && npm run test:all",
+    "desktop": "npm run build && python -m backend.desktop",
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1"
   },
   "dependencies": {
     "@vitejs/plugin-react": "5.0.2",

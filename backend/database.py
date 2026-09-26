@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import threading
 import uuid
 from contextlib import contextmanager
@@ -11,8 +12,16 @@ from pathlib import Path
 from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT / "data" / "applypilot.db"
 VALID_FACT_STATUS = {"VERIFIED", "UNVERIFIED", "UNKNOWN", "EXPIRED"}
+
+
+def data_dir() -> Path:
+    """Where the database and uploads live. Packaged builds use the per-user app data folder."""
+    if os.environ.get("APPLYPILOT_DATA_DIR"):
+        return Path(os.environ["APPLYPILOT_DATA_DIR"])
+    if getattr(sys, "frozen", False):
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "ApplyPilot"
+    return ROOT / "data"
 
 
 def now() -> str:
@@ -21,7 +30,7 @@ def now() -> str:
 
 class Database:
     def __init__(self, path: str | Path | None = None):
-        self.path = Path(path or os.environ.get("APPLYPILOT_DB", DEFAULT_DB))
+        self.path = Path(path or os.environ.get("APPLYPILOT_DB") or data_dir() / "applypilot.db")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self.migrate()

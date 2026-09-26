@@ -1,0 +1,39 @@
+import { ExternalLink, Gauge } from 'lucide-react'
+import { api } from '../api'
+import type { Application } from '../types'
+import { ACTIVE_STATUSES, Empty, PageHeading, STATUS_LABELS, formatDate, useAction, type PageProps } from '../ui'
+
+const COLUMNS: [string, string[]][] = [
+  ['In progress', ACTIVE_STATUSES],
+  ['Applied', ['APPLIED', 'SUBMITTED']],
+  ['Interviewing', ['INTERVIEWING']],
+  ['Offer', ['OFFER']],
+  ['Closed', ['REJECTED', 'WITHDRAWN']],
+]
+const MOVES = ['QUEUED', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'WITHDRAWN']
+
+export function Tracker({ data, refresh, go }: PageProps) {
+  const { run } = useAction(refresh)
+  const move = (app: Application, status: string) => run(`move-${app.id}`, () => api.setStatus(app.id, status), `${app.company || 'Application'} → ${STATUS_LABELS[status]}`)
+  return <>
+    <PageHeading eyebrow="Tracker" title="Every application, saved to offer" text="Move cards as you hear back. Dates are recorded in your activity log." />
+    {data.applications.length ? <div className="board">{COLUMNS.map(([title, statuses]) => {
+      const apps = data.applications.filter(a => statuses.includes(a.status))
+      return <section key={title} className="board-column"><header><b>{title}</b><em>{apps.length}</em></header>
+        {apps.map(app => <article key={app.id} className="board-card">
+          <b>{app.role || 'Role'}</b>
+          <span>{app.company || 'Company'}{app.location ? ` · ${app.location}` : ''}</span>
+          <small>{app.submitted_at ? `Applied ${formatDate(app.submitted_at)}` : `Updated ${formatDate(app.updated_at)}`}</small>
+          <footer>
+            <select value={MOVES.includes(app.status) ? app.status : ''} onChange={e => move(app, e.target.value)} aria-label="Move application">
+              {!MOVES.includes(app.status) && <option value="">{STATUS_LABELS[app.status] ?? app.status}</option>}
+              {MOVES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+            </select>
+            {app.posting_url && <a href={app.posting_url} target="_blank" rel="noreferrer" title="Open posting"><ExternalLink size={14} /></a>}
+          </footer>
+        </article>)}
+        {!apps.length && <p className="board-empty">Nothing here yet</p>}
+      </section>
+    })}</div> : <section className="panel"><Empty icon={Gauge} title="Nothing to track yet" text="Queue a job from Discover. Once you apply, mark it applied and it moves here." action={() => go('Discover')} actionLabel="Find jobs" /></section>}
+  </>
+}

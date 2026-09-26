@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from .countries import same_country
+
 SKILL_ALIASES = {
     "js": "javascript", "ts": "typescript", "postgres": "postgresql",
     "machine learning": "ml", "artificial intelligence": "ai",
@@ -24,6 +26,15 @@ def _value(row: dict[str, Any]) -> Any:
         except json.JSONDecodeError:
             return value
     return value
+
+
+NO_SPONSORSHIP = re.compile(r"(?i)\b(no|not|unable to|cannot|can't|won't|will not|does not|do not)\b[\w\s,]{0,30}\bsponsor")
+
+
+def country_fact(verified: list[dict[str, Any]], category: str, key: str, country: str | None) -> Any:
+    """Country-scoped facts never cross borders: only an exact country match counts."""
+    match = next((f for f in verified if f["category"] == category and f["fact_key"] == key and same_country(f.get("country_code"), country)), None)
+    return _value(match) if match else None
 
 
 def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -48,8 +59,20 @@ def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]
     country = job.get("country")
     work_text = job.get("work_authorization")
     if work_text or country:
-        auth = fact_map.get(("work_authorization", "authorized", country))
+        auth = country_fact(verified, "work_authorization", "authorized", country)
         checks.append({"name": "Work authorization", "result": "PASS" if auth is True else "FAIL" if auth is False else "UNKNOWN", "explanation": f"Country-specific answer for {country or 'this location'} only."})
+    sponsorship_text = job.get("sponsorship_information")
+    if sponsorship_text:
+        needs = country_fact(verified, "sponsorship", "requires_sponsorship", country)
+        if needs is False:
+            sponsorship, why = "PASS", "You do not require sponsorship here."
+        elif needs is True and NO_SPONSORSHIP.search(sponsorship_text):
+            sponsorship, why = "FAIL", "The posting says it does not sponsor, and you require sponsorship here."
+        elif needs is True:
+            sponsorship, why = "UNKNOWN", "Sponsorship wording is ambiguous; review it before applying."
+        else:
+            sponsorship, why = "UNKNOWN", f"Your sponsorship need for {country or 'this location'} is not verified."
+        checks.append({"name": "Sponsorship", "result": sponsorship, "explanation": why})
     checks.append({"name": "Required skills", "result": "PASS" if not missing else "PARTIAL", "explanation": f"{len(strong)} matched; {len(missing)} not present in verified profile."})
     definite_fail = any(c["result"] == "FAIL" for c in checks)
     unknown = any(c["result"] == "UNKNOWN" for c in checks)
