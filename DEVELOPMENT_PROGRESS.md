@@ -1,6 +1,21 @@
 # ApplyPilot development progress
 
-Last updated: 2026-09-22
+Last updated: 2026-09-27
+
+## Completed in 0.2 (first downloadable release)
+
+- Windows desktop app: single-process launcher (`backend/desktop.py`) with a native WebView2 window, PyInstaller bundle, per-user Inno Setup installer, portable zip, and a tag-triggered GitHub Actions release workflow.
+- Packaged data lives in `%LOCALAPPDATA%\ApplyPilot`; the service serves the built UI with a strict CSP.
+- Security: the local API rejects cross-site requests (Host/Origin/content-type checks), and URL import re-checks every redirect hop against private networks.
+- Country normalization (`IN` = `India`, `UK` = `GB`) for authorization, sponsorship, and Answer Vault scope; they still never cross borders.
+- Sponsorship eligibility check (PASS/FAIL/UNKNOWN) from verified per-country need and posting wording.
+- Manual job entry with deterministic skill and requirement extraction; saved eligibility shown on reload.
+- CV approval, duplicate detection, and automatic attachment of the latest approved CV to queued applications.
+- Tracker board with status changes, Answer Vault CRUD and approval, Analytics, and a filterable Activity log.
+- Profile: inline fact editing, per-country authorization/sponsorship grid, autofill-readiness meter.
+- Queue: field-by-field dry-run plan with sources and pause reasons; validation failures listed individually.
+- Fixed: production build (tsconfig), invisible first-run wizard buttons, serif fallback fonts, light-theme contrast, hardcoded date/name on Home.
+- Tests: 41 backend tests and frontend helper tests.
 
 ## Completed in milestone 0.1
 
@@ -28,7 +43,8 @@ This build environment returns HTTP 403 for public npm and PyPI registries and d
 4. Add full review screen and document allowlist.
 5. Capture successful confirmation receipts.
 6. Add Ollama health/model discovery and strict schema validation.
-7. Package Python sidecar and finish Tauri Windows installer.
+7. Code-sign the Windows installer.
+8. Wire the Playwright browser runner to the queue behind the existing pause rules.
 
 ## Non-negotiable boundary
 

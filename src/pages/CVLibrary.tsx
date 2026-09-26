@@ -1,0 +1,31 @@
+import { useRef } from 'react'
+import { FileText, Upload } from 'lucide-react'
+import { api, readFileBase64 } from '../api'
+import { Badge, Empty, PageHeading, formatDate, useAction, type PageProps } from '../ui'
+
+export function CVLibrary({ data, refresh }: PageProps) {
+  const { run, busy } = useAction(refresh)
+  const input = useRef<HTMLInputElement>(null)
+  const upload = async (file?: File) => {
+    if (!file) return
+    await run('upload', async () => api.importCV(file.name, await readFileBase64(file)), `${file.name} imported — review and approve it`)
+    if (input.current) input.current.value = ''
+  }
+  return <>
+    <PageHeading eyebrow="CV Library" title="Your CVs" text="Originals stay immutable. Only approved CVs are attached to applications.">
+      <button className="button primary" disabled={busy === 'upload'} onClick={() => input.current?.click()}><Upload size={16} /> {busy === 'upload' ? 'Importing…' : 'Upload PDF'}</button>
+      <input ref={input} type="file" accept="application/pdf" hidden onChange={e => upload(e.target.files?.[0])} />
+    </PageHeading>
+    <section className="panel">{data.cvs.length ? <div className="cv-list">{data.cvs.map(cv => <article key={cv.id} className="cv-card">
+      <div className="cv-icon"><FileText /></div>
+      <div className="cv-body">
+        <div className="cv-title"><b>{cv.name}</b><Badge tone={cv.approved ? 'good' : 'warn'}>{cv.approved ? 'Approved' : 'Needs review'}</Badge></div>
+        <span>{cv.variant} · v{cv.version} · added {formatDate(cv.created_at)} · sha256 {cv.sha256.slice(0, 10)}…</span>
+        {cv.extracted_profile?.extraction_error && <small className="warn-text">{cv.extracted_profile.extraction_error}</small>}
+        {!!cv.extracted_profile?.skill_candidates?.length && <div className="skill-line"><small>Skills mentioned (unverified):</small>{cv.extracted_profile.skill_candidates.map(s => <Badge key={s}>{s}</Badge>)}</div>}
+        {!!cv.extracted_profile?.email_candidates?.length && <small>Emails found: {cv.extracted_profile.email_candidates.join(', ')}</small>}
+      </div>
+      <button className={`button ${cv.approved ? 'ghost' : 'primary'}`} disabled={busy === cv.id} onClick={() => run(cv.id, () => api.approveCV(cv.id, !cv.approved), cv.approved ? 'Approval removed' : 'CV approved — queued applications now use it')}>{cv.approved ? 'Revoke approval' : 'Approve'}</button>
+    </article>)}</div> : <Empty icon={FileText} title="No CVs yet" text="Upload a PDF. Anything extracted from it stays a suggestion until you verify it in your profile." action={() => input.current?.click()} actionLabel="Upload PDF" />}</section>
+  </>
+}

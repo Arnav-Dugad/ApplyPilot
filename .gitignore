@@ -13,3 +13,14 @@ test-results/
 .env
 .codex/
 src-tauri/target/
+
+# Local agent tooling
+.agentrelay/
+.mcp.json
+
+# Desktop packaging output
+release/
+*.spec.bak
+*.tsbuildinfo
+build/
+.venv-build/

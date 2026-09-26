@@ -12,10 +12,10 @@ The AI layer may summarize, classify, or draft. It cannot write verified profile
 
 ## Components
 
-- React/Vite renderer: first-run wizard, dashboard, discovery, queue, profile, review surfaces.
-- Local Python service: loopback-only HTTP, SQLite migrations, parsers, rules, validation, audit log.
+- React/Vite renderer: first-run wizard, dashboard, discovery, queue, tracker, CV library, profile, answer vault, analytics, activity.
+- Local Python service: loopback-only HTTP, SQLite migrations, parsers, rules, validation, audit log. It also serves the built UI, so the desktop app is a single process. Requests must carry a loopback `Host`, a same-origin (or dev-server) `Origin`, and a JSON content type, which blocks DNS rebinding and cross-site form posts from other pages open in your browser.
 - Adapter layer: Greenhouse, Lever, Workday, Ashby, SmartRecruiters, then Generic fallback.
-- Tauri shell: planned Windows process lifecycle, native file dialogs, credential storage, and packaging.
+- Desktop shell (`backend/desktop.py`): starts the service on a random loopback port and opens a native window through pywebview (Edge WebView2). It falls back to an Edge app window, then the default browser. PyInstaller bundles it and Inno Setup installs it per user; data lives in `%LOCALAPPDATA%\ApplyPilot`.
 - Optional Ollama provider: schema-validated suggestions only; deterministic fallback always exists.
 
 ## Data flow

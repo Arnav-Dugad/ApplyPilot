@@ -19,6 +19,15 @@ def adapter_for(url: str) -> str:
     return "GENERIC"
 
 
+def display_value(value: Any) -> str:
+    """Yes/No questions are stored as booleans; forms expect the words."""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 def detect_pause_reason(page_text: str) -> str | None:
     lowered = page_text.lower()
     if any(x in lowered for x in CAPTCHA_MARKERS):
@@ -73,12 +82,12 @@ def browser_dry_run(url: str, facts: list[dict[str, Any]], country: str | None, 
             locator = page.locator(field["selector"]).first
             value = field["decision"]["value"]
             if locator.evaluate("e => e.tagName.toLowerCase()") == "select":
-                locator.select_option(label=str(value))
+                locator.select_option(label=display_value(value))
             elif locator.get_attribute("type") in {"checkbox", "radio"}:
                 if bool(value):
                     locator.check()
             else:
-                locator.fill(str(value))
+                locator.fill(display_value(value))
         # No code path in this function locates or clicks submit.
         page.bring_to_front()
         emit("DRY_RUN_COMPLETED", {"status": plan["status"]})

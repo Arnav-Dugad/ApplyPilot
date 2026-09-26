@@ -1,0 +1,37 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (for example v0.2.0)
+        required: true
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ env.TAG }}' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build installer and portable zip
+        shell: pwsh
+        run: ./packaging/build.ps1 -Version $env:TAG.TrimStart('v')
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ApplyPilot ${{ env.TAG }}
+          generate_release_notes: true
+          files: |
+            release/ApplyPilot-Setup-*.exe
+            release/ApplyPilot-*-portable-win64.zip
