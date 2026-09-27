@@ -340,6 +340,15 @@ class ServiceV04Tests(unittest.TestCase):
         with mock.patch("backend.offers.fetch_rates", lambda: {"rates": {"USD": 1.0}, "source": "test"}):
             self.assertEqual(service.offers_overview("USD")["rows"][0]["monthly_base"], 2000.0)
 
+    def test_whats_new_can_only_be_dismissed(self):
+        from backend import server
+
+        DB.set_setting("whats_new_pending", "9.9.9")
+        with self.assertRaises(ValueError):
+            server._settings({"whats_new_pending": "1.0.0"})
+        server._settings({"whats_new_pending": None})
+        self.assertIsNone(DB.setting("whats_new_pending"))
+
     @unittest.skipUnless(sys.platform == "win32", "Windows data protection")
     def test_email_password_encrypted(self):
         service.save_email_settings({"provider": "GMAIL", "address": "me@example.com", "password": "abcd efgh ijkl mnop"})

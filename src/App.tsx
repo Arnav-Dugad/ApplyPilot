@@ -68,6 +68,9 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
   const [jobId, setJobId] = useState<string | null>(null)
   const [askQuery, setAskQuery] = useState<{ q: string; n: number } | null>(null)
   const [notesOpen, setNotesOpen] = useState(false)
+  // After an automatic update, show that version's release notes once.
+  const justUpdated = Boolean(data.settings.whats_new_pending && data.settings.whats_new_pending === data.version && data.update?.notes && data.update.latest === data.version)
+  const dismissWhatsNew = useCallback(() => { api.settings({ whats_new_pending: null }).then(refresh).catch(() => undefined) }, [refresh])
   const setDark = (value: boolean) => { setDarkState(value); try { localStorage.setItem(THEME_KEY, value ? 'dark' : 'light') } catch { /* preference is optional */ } }
   const go = useCallback((p: Page) => { setPage(p); document.querySelector('main')?.scrollTo({ top: 0 }) }, [])
 
@@ -129,6 +132,8 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
       </div></main>
     {jobId && <JobDrawer jobId={jobId} data={data} refresh={refresh} close={() => setJobId(null)} go={go} openJob={setJobId} />}
     {notesOpen && data.update?.notes && <Modal title={`What’s new in ApplyPilot ${data.update.latest}`} onClose={() => setNotesOpen(false)}><ReleaseNotes notes={data.update.notes} /></Modal>}
+    {justUpdated && <Modal title={`You’re on ApplyPilot ${data.version} 🎉`} subtitle="Updated automatically — your data is exactly as you left it." onClose={dismissWhatsNew}
+      footer={<><span className="spacer" /><button className="button primary" onClick={dismissWhatsNew}>Let’s go</button></>}><ReleaseNotes notes={data.update!.notes!} /></Modal>}
     {palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={e => e.stopPropagation()}>
       <div><Command /><input autoFocus value={query} placeholder="Search jobs, pages, or actions…" onChange={e => { setQuery(e.target.value); setSelected(0) }}
         onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(s => Math.min(s + 1, commands.length - 1)) } if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(s => Math.max(s - 1, 0)) } if (e.key === 'Enter') choose(selected) }} /></div>

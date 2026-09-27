@@ -59,10 +59,12 @@ def _save_answer(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _settings(body: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot", "desktop", "updates", "base_currency"}
+    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot", "desktop", "updates", "base_currency", "whats_new_pending"}
     for key, value in body.items():
         if key not in allowed:
             continue
+        if key == "whats_new_pending" and value is not None:
+            raise ValueError("The what's-new notice can only be dismissed")
         if key == "desktop":
             current = {**SETTING_DEFAULTS["desktop"], **(DB.setting("desktop") or {})}
             value = {**current, **{k: bool(v) for k, v in dict(value).items() if k in current}}
