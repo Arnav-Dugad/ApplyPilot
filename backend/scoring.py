@@ -68,7 +68,7 @@ def _days_since(iso: str | None) -> float | None:
     return (datetime.now(timezone.utc) - stamp).total_seconds() / 86400
 
 
-def score(job: dict[str, Any], analysis: dict[str, Any], preferred_locations: list[str]) -> dict[str, Any]:
+def score(job: dict[str, Any], analysis: dict[str, Any], preferred_locations: list[str], taste: tuple[float, list[str]] | None = None) -> dict[str, Any]:
     factors: list[dict[str, Any]] = []
 
     def add(name: str, points: float, maximum: int, detail: str) -> None:
@@ -110,6 +110,11 @@ def score(job: dict[str, Any], analysis: dict[str, Any], preferred_locations: li
         add("Deadline", 5, 5, f"Closes in {int(-deadline)} days")
 
     total = sum(f["points"] for f in factors)
+    if taste and taste[0]:
+        # Learned from 👍/👎: can add or remove up to 5 points, shown as its own factor.
+        factors.append({"name": "Your taste", "points": taste[0], "max": 5, "detail": "; ".join(taste[1]) or "Learned from your 👍/👎"})
+        total += taste[0]
+    total = max(0.0, min(100.0, total))
     result = analysis.get("result")
     if result == "INELIGIBLE":
         total, cap = min(total, 15), "Capped: a definite eligibility check failed"

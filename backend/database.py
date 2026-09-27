@@ -24,6 +24,12 @@ COLUMN_MIGRATIONS = [
     ("eligibility_results", "score_json", "TEXT NOT NULL DEFAULT '{}'"),
     ("applications", "prep_source", "TEXT"),
     ("applications", "browser_run_json", "TEXT NOT NULL DEFAULT '{}'"),
+    ("jobs", "fingerprint", "TEXT"),
+    ("jobs", "duplicate_of", "TEXT"),
+    ("applications", "previous_status", "TEXT"),
+    ("applications", "status_note", "TEXT"),
+    ("applications", "followed_up_at", "TEXT"),
+    ("drafts", "application_id", "TEXT"),
 ]
 
 AUTOPILOT_DEFAULTS = {
@@ -37,6 +43,48 @@ AUTOPILOT_DEFAULTS = {
     "ai_summaries": True,
     "ai_cover_letters": False,
 }
+
+
+SETTING_DEFAULTS: dict[str, Any] = {
+    "strict_accuracy_mode": True,
+    "dry_run": True,
+    "actual_submission_enabled": False,
+    "automation_mode": "REVIEW_BEFORE_SUBMIT",
+    "ollama": {"provider": "OFF", "endpoint": "http://localhost:11434", "model": None},
+    "first_run_complete": False,
+    "autopilot": AUTOPILOT_DEFAULTS,
+    "updates": {"auto_install": True},
+    "desktop": {"close_to_tray": True, "start_with_windows": False},
+    "email_sync": {"enabled": False, "provider": "GMAIL", "host": "imap.gmail.com", "port": 993, "address": "", "secret": None, "last_sync": None, "last_error": None},
+    "base_currency": "USD",
+    "last_version": None,
+}
+
+
+def _rebuild(conn: sqlite3.Connection, table: str, marker: str, create_sql: str, columns: str, indexes: tuple[str, ...] = ()) -> None:
+    """Recreates a 0.3 table whose CHECK constraint is too narrow for 0.4, copying every row."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if not row or marker not in row[0]:
+        return
+    conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+    conn.execute(create_sql)
+    conn.execute(f"INSERT INTO {table}({columns}) SELECT {columns} FROM {table}_old")
+    conn.execute(f"DROP TABLE {table}_old")
+    for index in indexes:
+        conn.execute(index)
+
+
+def _rebuild_drafts_without_kind_check(conn: sqlite3.Connection) -> None:
+    """0.3 limited draft kinds and job-board platforms with CHECK constraints; 0.4 adds more of both."""
+    _rebuild(conn, "drafts", "CHECK(kind IN", """CREATE TABLE drafts (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, job_id TEXT, application_id TEXT, question TEXT, content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','APPROVED')), model TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE)""", "id,kind,job_id,question,content,status,model,created_at,updated_at",
+             ("CREATE INDEX IF NOT EXISTS idx_drafts_job ON drafts(job_id, kind)",))
+    _rebuild(conn, "watchlist", "CHECK(platform IN", """CREATE TABLE watchlist (
+      id TEXT PRIMARY KEY, platform TEXT NOT NULL, slug TEXT NOT NULL, company TEXT NOT NULL, created_at TEXT NOT NULL, last_scanned_at TEXT, last_status TEXT,
+      jobs_seen INTEGER NOT NULL DEFAULT 0, internships_seen INTEGER NOT NULL DEFAULT 0, UNIQUE(platform, slug))""",
+             "id,platform,slug,company,created_at,last_scanned_at,last_status,jobs_seen,internships_seen")
 
 
 def data_dir() -> Path:
@@ -78,20 +126,14 @@ class Database:
         with self._lock, self.connect() as conn:
             conn.executescript(schema)
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)", (now(),))
+            _rebuild_drafts_without_kind_check(conn)
             for table, column, ddl in COLUMN_MIGRATIONS:
                 if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint ON jobs(fingerprint)")
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)", (now(),))
-            defaults = {
-                "strict_accuracy_mode": True,
-                "dry_run": True,
-                "actual_submission_enabled": False,
-                "automation_mode": "REVIEW_BEFORE_SUBMIT",
-                "ollama": {"provider": "OFF", "endpoint": "http://localhost:11434", "model": None},
-                "first_run_complete": False,
-                "autopilot": AUTOPILOT_DEFAULTS,
-            }
-            for key, value in defaults.items():
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, ?)", (now(),))
+            for key, value in SETTING_DEFAULTS.items():
                 conn.execute("INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES(?,?,?)", (key, json.dumps(value), now()))
 
     def rows(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:

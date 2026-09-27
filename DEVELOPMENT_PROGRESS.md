@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-27
 
+## Completed in 0.4
+
+- Self-updater (GitHub Releases, SHA-256 + size verification, official-host redirects only, no downgrades, background download with live progress, 30-second postponable install that never interrupts Autopilot or live fill, silent install and relaunch).
+- Backup, restore, and full reset (typed confirmation, automatic safety backups, archive validation, CV paths re-pointed after restore).
+- Desktop: tray icon, close-to-tray, single instance, start with Windows, Windows notifications.
+- Intelligence: duplicate detection, learned preferences, "Why not me?" coach, language requirements, natural-language search with optional local embeddings, deadline radar, follow-up drafts, focused Inbox, health report, Today actions, profile strength.
+- Classifier hardening from an audit of 291 real application questions: yes/no questions never receive text facts, third-party contact fields, GPA, transcripts, postal codes, and relocation assistance are isolated, visa sponsorship must mean visas.
+- Features: Workday, Workable, Recruitee, Teamtailor; companies with notes and hiring seasons; LinkedIn referrals; calendar; offer comparison; tailored CVs with line diff and PDF; interview prep; IMAP email sync with undo.
+- Fixed: live fill no longer pauses on the reCAPTCHA footer text most Greenhouse forms show; SQLite connections are always closed; re-scoring 6x faster.
+- Tests: 98 backend tests.
+
 ## Completed in 0.3 (Autopilot)
 
 - Autopilot: scheduled discovery from Greenhouse, Lever, Ashby, and SmartRecruiters public feeds; curated company catalogue; location and internship filters; auto-queue above a score bar; form pre-checks; notifications; live run timeline.

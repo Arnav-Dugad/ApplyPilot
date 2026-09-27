@@ -6,19 +6,22 @@ import hashlib
 import json
 import re
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, ai, discovery
+from . import __version__, ai, cv_tailor, discovery, insights, shell
 from .automation import COUNTRY_SCOPED, FACT_MAPPING, dry_run, field_definitions
 from .cv_extract import extract as extract_cv
 from .database import Database, now
 from .eligibility import evaluate, extract_skills
 from .job_parser import requirement_sentences
-from .safety import classify_field, normalize
+from .languages import detect as detect_languages
+from . import referrals
+from .safety import TEXT_FACTS, YES_NO_OPTIONS, classify_field, is_yes_no_question, normalize
 from .scoring import job_country, location_match, preferred_locations, score
 
 DB = Database()
@@ -77,15 +80,21 @@ def answers() -> list[dict[str, Any]]:
     return decoded(DB.rows("SELECT * FROM answer_vault"))
 
 
+TOAST_KINDS = {"AUTOPILOT", "OFFER", "DEADLINE", "EMAIL", "UPDATE", "FOLLOW_UP"}
+
+
 def notify(kind: str, title: str, body: str = "", page: str | None = None) -> None:
     DB.execute("INSERT INTO notifications(created_at,kind,title,body,page) VALUES(?,?,?,?,?)", (now(), kind, title, body, page))
+    if kind in TOAST_KINDS:
+        shell.toast(title, body)  # Windows notification when the desktop app is running
 
 
 # ---------- jobs ----------
 
 JOB_COLUMNS = ["id", "company", "role", "location", "country", "remote_status", "posting_url", "application_url", "source", "date_found", "date_posted", "deadline", "description",
                "required_skills_json", "preferred_skills_json", "degree_requirements", "graduation_requirements", "experience_requirements", "work_authorization", "sponsorship_information",
-               "duration", "start_date", "compensation", "application_platform", "requisition_id", "raw_snapshot", "extraction_status", "external_id", "board_questions_json", "employment_type"]
+               "duration", "start_date", "compensation", "application_platform", "requisition_id", "raw_snapshot", "extraction_status", "external_id", "board_questions_json", "employment_type",
+               "fingerprint", "duplicate_of"]
 
 
 def save_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +110,10 @@ def save_job(payload: dict[str, Any]) -> dict[str, Any]:
         payload["country"] = job_country(payload)  # from location text, e.g. "London, UK" -> GB
     existing = DB.one("SELECT id FROM jobs WHERE external_id=?", (payload["external_id"],)) if payload.get("external_id") else None
     job_id = payload.get("id") or (existing["id"] if existing else str(uuid.uuid4()))
+    payload["fingerprint"] = insights.fingerprint(payload)
+    original = DB.one("SELECT id FROM jobs WHERE fingerprint=? AND id != ? AND duplicate_of IS NULL AND (posting_url IS NULL OR posting_url != ?) ORDER BY date_found LIMIT 1",
+                      (payload["fingerprint"], job_id, payload.get("posting_url") or ""))
+    payload["duplicate_of"] = original["id"] if original else None  # the same opening posted twice (another board, or re-posted)
     values = {
         **payload, "id": job_id, "date_found": payload.get("date_found", now()),
         "source": payload.get("source", "MANUAL"), "description": payload.get("description") or "",
@@ -124,27 +137,86 @@ def job_detail(job_id: str) -> dict[str, Any]:
     job.pop("raw_snapshot", None)
     job["drafts"] = DB.rows("SELECT * FROM drafts WHERE job_id=? ORDER BY updated_at DESC", (job_id,))
     job["application"] = DB.one("SELECT id,status FROM applications WHERE job_id=?", (job_id,))
+    job["languages"] = detect_languages(job.get("description") or "")
+    vote = DB.one("SELECT vote FROM job_feedback WHERE job_id=?", (job_id,))
+    job["vote"] = vote["vote"] if vote else 0
+    job["referrals"] = referrals.matches(job.get("company"), DB.rows("SELECT * FROM connections"))[:8]
+    job["duplicates"] = DB.rows("SELECT id, company, role, source, posting_url FROM jobs WHERE duplicate_of=? OR id=?", (job_id, job.get("duplicate_of") or ""))
+    notes = DB.one("SELECT notes FROM company_notes WHERE company_key=?", (insights.company_key(job.get("company")),))
+    job["company_notes"] = notes["notes"] if notes else ""
     return job
 
 
-def analyze_job(job_id: str, fact_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def taste_weights() -> dict[str, float]:
+    votes = decoded(DB.rows("SELECT jobs.*, job_feedback.vote FROM job_feedback JOIN jobs ON jobs.id=job_feedback.job_id"))
+    return insights.learn_preferences([(v, v["vote"]) for v in votes])
+
+
+def analyze_job(job_id: str, fact_rows: list[dict[str, Any]] | None = None, weights: dict[str, float] | None = None, log: bool = True) -> dict[str, Any]:
     job = one("SELECT * FROM jobs WHERE id=?", (job_id,))
     fact_rows = fact_rows if fact_rows is not None else facts()
+    weights = weights if weights is not None else taste_weights()
     result = evaluate(job, fact_rows)
-    result["score"] = score(job, result, preferred_locations(fact_rows))
+    result["score"] = score(job, result, preferred_locations(fact_rows), insights.preference_points(job, weights))
     DB.execute("""INSERT INTO eligibility_results(id,job_id,result,checks_json,match_json,score_json,evaluated_at) VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(job_id) DO UPDATE SET result=excluded.result,checks_json=excluded.checks_json,match_json=excluded.match_json,score_json=excluded.score_json,evaluated_at=excluded.evaluated_at""",
                (str(uuid.uuid4()), job_id, result["result"], json.dumps(result["checks"]), json.dumps(result["match"]), json.dumps(result["score"]), now()))
-    DB.log("ELIGIBILITY_ANALYZED", "job", job_id, {"result": result["result"], "score": result["score"]["score"]})
+    if log:
+        DB.log("ELIGIBILITY_ANALYZED", "job", job_id, {"result": result["result"], "score": result["score"]["score"]})
     return result
 
 
 def analyze_all() -> int:
-    fact_rows = facts()
-    ids = [r["id"] for r in DB.rows("SELECT id FROM jobs")]
-    for job_id in ids:
-        analyze_job(job_id, fact_rows)
-    return len(ids)
+    """Re-scores every job in one transaction; one summary line in the activity log instead of one per job."""
+    fact_rows, weights = facts(), taste_weights()
+    prefs = preferred_locations(fact_rows)
+    rows = []
+    for job in decoded(DB.rows("SELECT * FROM jobs")):
+        result = evaluate(job, fact_rows)
+        result["score"] = score(job, result, prefs, insights.preference_points(job, weights))
+        rows.append((str(uuid.uuid4()), job["id"], result["result"], json.dumps(result["checks"]), json.dumps(result["match"]), json.dumps(result["score"]), now()))
+    with DB._lock, DB.connect() as conn:
+        conn.executemany("""INSERT INTO eligibility_results(id,job_id,result,checks_json,match_json,score_json,evaluated_at) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET result=excluded.result,checks_json=excluded.checks_json,match_json=excluded.match_json,score_json=excluded.score_json,evaluated_at=excluded.evaluated_at""", rows)
+    DB.log("JOBS_RESCORED", details={"jobs": len(rows)})
+    return len(rows)
+
+
+RESCORING_CATEGORIES = {"skills", "languages", "work_authorization", "sponsorship", "education", "preferences"}
+
+
+def save_fact(payload: dict[str, Any]) -> dict[str, Any]:
+    """Saves a profile fact; facts that affect eligibility re-score every job so rankings are never stale."""
+    saved = decoded([DB.upsert_fact(payload)])[0]
+    rescored = analyze_all() if payload.get("category") in RESCORING_CATEGORIES else 0
+    return saved | {"reprepared": reprepare_active(), "rescored": rescored}
+
+
+def backfill_fingerprints() -> int:
+    """Jobs saved before 0.4 get fingerprints so duplicates are recognised across the whole history."""
+    rows = DB.rows("SELECT id, company, role, location, country FROM jobs WHERE fingerprint IS NULL ORDER BY date_found")
+    for row in rows:
+        fp = insights.fingerprint(row)
+        original = DB.one("SELECT id FROM jobs WHERE fingerprint=? AND duplicate_of IS NULL AND id != ? LIMIT 1", (fp, row["id"]))
+        DB.execute("UPDATE jobs SET fingerprint=?, duplicate_of=? WHERE id=?", (fp, original["id"] if original else None, row["id"]))
+    return len(rows)
+
+
+def vote_job(job_id: str, vote: int) -> dict[str, Any]:
+    """Thumbs up/down on a job. Teaches the ranking; a thumbs-down also keeps Autopilot from queueing it."""
+    one("SELECT id FROM jobs WHERE id=?", (job_id,))
+    if vote not in (-1, 0, 1):
+        raise ValueError("Vote must be -1, 0, or 1")
+    if vote == 0:
+        DB.execute("DELETE FROM job_feedback WHERE job_id=?", (job_id,))
+    else:
+        DB.execute("INSERT INTO job_feedback(job_id,vote,created_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET vote=excluded.vote,created_at=excluded.created_at", (job_id, vote, now()))
+    total = DB.one("SELECT COUNT(*) AS n FROM job_feedback")["n"]
+    if total >= 3:
+        analyze_all()
+    else:
+        analyze_job(job_id)
+    return {"ok": True, "votes": total, "learning": total >= 3}
 
 
 def approved_cv(cv_id: str | None = None) -> dict[str, Any] | None:
@@ -244,7 +316,9 @@ def answer_question(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("value")
     if not question or value in (None, "", []):
         raise ValueError("Question and answer are required")
-    classification = payload.get("classification") or classify_field(question)
+    classification = payload.get("classification") or classify_field(question, options=payload.get("options"))
+    if classification in TEXT_FACTS and (is_yes_no_question(question, payload.get("options")) or normalize(str(value)) in YES_NO_OPTIONS):
+        classification = "UNKNOWN"  # defence in depth: "Yes" must never overwrite a university, phone, or name
     if classification == "CREDENTIAL":
         raise ValueError("Passwords and access codes are never stored; enter them on the site yourself")
     kind = _question_kind(classification)
@@ -387,7 +461,20 @@ def update_draft(draft_id: str, content: str | None, approve: bool) -> dict[str,
         raise ValueError("Draft is empty")
     if approve and re.search(r"\[[^\]]{3,}\]", text):
         raise ValueError("Replace the [bracketed placeholders] before approving")
+    if approve and draft["kind"] == "CV_TAILORED":
+        flags = cv_tailor.invention_flags(_source_cv_text(draft), text, _verified_skills())
+        if flags["skills"] or flags["numbers"]:
+            found = ", ".join(flags["skills"] + flags["numbers"])
+            raise ValueError(f"The tailored CV mentions things your original doesn't ({found}). Edit them out before approving.")
     DB.execute("UPDATE drafts SET content=?,status=?,updated_at=? WHERE id=?", (text, "APPROVED" if approve else "DRAFT", now(), draft_id))
+    if approve and draft["kind"] == "CV_TAILORED":
+        cv = finalize_tailored_cv({**draft, "content": text})
+        DB.log("DRAFT_APPROVED", "draft", draft_id)
+        return {"ok": True, "cv": cv}
+    if approve and draft["kind"] == "FOLLOW_UP" and draft.get("application_id"):
+        DB.execute("UPDATE applications SET followed_up_at=? WHERE id=?", (now(), draft["application_id"]))
+        DB.log("DRAFT_APPROVED", "draft", draft_id)
+        return {"ok": True}
     if approve and draft["kind"] == "ANSWER" and draft.get("question"):
         answer_question({"question": draft["question"], "value": text, "classification": "CUSTOM", "scope": "COMPANY_SPECIFIC" if draft.get("company") else "EXACT", "company": draft.get("company")})
     elif approve:
@@ -448,7 +535,14 @@ class Autopilot:
             return
 
         def loop() -> None:
+            last_housekeeping = 0.0
             while not self._stop.wait(30):
+                try:
+                    if time.time() - last_housekeeping > 600:
+                        last_housekeeping = time.time()
+                        housekeeping()
+                except Exception:
+                    DB.log("HOUSEKEEPING_ERROR", details={"error": traceback.format_exc()[-500:]}, level="ERROR")
                 try:
                     due = self.next_run_at()
                     if due and datetime.fromisoformat(due) <= datetime.now(timezone.utc) and not self.running_id:
@@ -536,10 +630,14 @@ class Autopilot:
             queued_now: list[str] = []
             if cfg["auto_queue"]:
                 candidates = DB.rows("""SELECT jobs.id, jobs.company, jobs.role, jobs.deadline, e.result, e.score_json FROM jobs JOIN eligibility_results e ON e.job_id=jobs.id
-                    WHERE e.result IN ('ELIGIBLE','LIKELY_ELIGIBLE') AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id=jobs.id)""")
+                    WHERE e.result IN ('ELIGIBLE','LIKELY_ELIGIBLE') AND jobs.duplicate_of IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id=jobs.id)
+                      AND NOT EXISTS (SELECT 1 FROM job_feedback f WHERE f.job_id=jobs.id AND f.vote < 0)""")
                 for c in sorted(candidates, key=lambda r: -json.loads(r["score_json"] or "{}").get("score", 0)):
                     s = json.loads(c["score_json"] or "{}")
                     if s.get("score", 0) < cfg["min_score"] or (cfg["internships_only"] and not s.get("is_internship")):
+                        continue
+                    if c.get("deadline") and c["deadline"] < now():
                         continue
                     try:
                         app = queue_job(c["id"])
@@ -599,26 +697,420 @@ def autopilot_state() -> dict[str, Any]:
 
 # ---------- bootstrap ----------
 
-def bootstrap() -> dict[str, Any]:
+def public_settings() -> dict[str, Any]:
+    """Settings for the UI. Secrets (the encrypted email password) never leave the service."""
     settings = {r["key"]: json.loads(r["value_json"]) for r in DB.rows("SELECT * FROM settings")}
+    mail = dict(settings.get("email_sync") or {})
+    mail["has_password"] = bool(mail.pop("secret", None))
+    settings["email_sync"] = mail
+    settings.pop("deadline_alerts", None)
+    return settings
+
+
+_backfilled = False
+
+
+def bootstrap() -> dict[str, Any]:
+    global _backfilled
+    if not _backfilled:
+        _backfilled = True
+        backfill_fingerprints()
+    settings = public_settings()
     jobs = decoded(DB.rows("""SELECT jobs.id,company,role,location,country,remote_status,posting_url,application_url,source,date_found,date_posted,deadline,compensation,employment_type,
         substr(description,1,700) AS description,required_skills_json,preferred_skills_json,work_authorization,sponsorship_information,application_platform,extraction_status,ai_summary_json,
+        duplicate_of, (SELECT vote FROM job_feedback f WHERE f.job_id=jobs.id) AS vote,
         CASE WHEN board_questions_json IS NULL THEN 0 ELSE json_array_length(board_questions_json) END AS question_count,
         e.result AS eligibility_result,e.checks_json AS eligibility_checks_json,e.match_json AS eligibility_match_json,e.score_json AS score_json
         FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id ORDER BY date_found DESC"""))
-    apps = decoded(DB.rows("""SELECT applications.*,jobs.company,jobs.role,jobs.location,jobs.country,jobs.posting_url,jobs.application_url,cvs.name AS cv_name
+    for job in jobs:
+        code = job_country(job)
+        job["country_code"] = code if code and len(code) == 2 and code.isupper() else None
+    apps = decoded(DB.rows("""SELECT applications.*,jobs.company,jobs.role,jobs.location,jobs.country,jobs.posting_url,jobs.application_url,jobs.deadline,cvs.name AS cv_name,
+        (SELECT e.id FROM email_events e WHERE e.application_id=applications.id AND e.action='MOVE' ORDER BY e.created_at DESC LIMIT 1) AS email_event_id
         FROM applications JOIN jobs ON jobs.id=applications.job_id LEFT JOIN cvs ON cvs.id=applications.cv_id ORDER BY applications.updated_at DESC"""))
-    cvs = decoded(DB.rows("SELECT id,name,variant,version,sha256,approved,extracted_profile_json,created_at FROM cvs ORDER BY created_at DESC"))
+    cvs = decoded(DB.rows("SELECT id,name,variant,version,sha256,approved,extracted_profile_json,original_id,created_at FROM cvs ORDER BY created_at DESC"))
     for cv in cvs:
         cv["approved"] = bool(cv["approved"])
     box = inbox()
+    fact_rows = decoded(DB.rows("SELECT * FROM profile_facts ORDER BY category,fact_key"))
+    from . import updater
+    follow_ups = DB.one("SELECT COUNT(*) AS n FROM drafts WHERE kind='FOLLOW_UP' AND status='DRAFT'")["n"]
     return {
-        "version": __version__, "settings": settings,
-        "facts": decoded(DB.rows("SELECT * FROM profile_facts ORDER BY category,fact_key")),
+        "version": __version__, "settings": settings, "facts": fact_rows,
         "jobs": jobs, "applications": apps, "cvs": cvs,
         "activity": decoded(DB.rows("SELECT * FROM activity_log ORDER BY id DESC LIMIT 200")),
         "answers": decoded(DB.rows("SELECT * FROM answer_vault ORDER BY updated_at DESC")),
         "watchlist": DB.rows("SELECT * FROM watchlist ORDER BY company"), "catalog": discovery.CATALOG,
         "inbox": box, "autopilot": autopilot_state(),
         "notifications": DB.rows("SELECT * FROM notifications ORDER BY id DESC LIMIT 30"),
+        "update": updater.state(),
+        "strength": insights.profile_strength(fact_rows, any(c["approved"] for c in cvs)),
+        "today": insights.today(jobs, apps, box, follow_ups),
+        "health": insights.health(DB.rows("SELECT * FROM watchlist"), jobs, apps, fact_rows, decoded(DB.rows("SELECT * FROM answer_vault")), any(c["approved"] for c in cvs), settings["email_sync"]),
+        "connections": DB.one("SELECT COUNT(*) AS n FROM connections")["n"],
+        "offers": offers_overview(settings.get("base_currency") or "USD"),
     }
+
+
+# ---------- housekeeping: deadlines, follow-ups, email ----------
+
+def housekeeping() -> dict[str, Any]:
+    jobs = decoded(DB.rows("SELECT id, company, role, deadline FROM jobs"))
+    apps = DB.rows("SELECT id, job_id, status FROM applications")
+    alerted = set(DB.setting("deadline_alerts") or [])
+    fired = 0
+    for alert in insights.deadline_alerts(jobs, apps):
+        if alert["application_id"] in alerted:
+            continue
+        alerted.add(alert["application_id"])
+        fired += 1
+        notify("DEADLINE", f"{alert['company']} closes in {alert['hours']}h", f"{alert['role']} — finish it in your Queue before it closes.", "Queue")
+    if fired:
+        DB.set_setting("deadline_alerts", sorted(alerted))
+    drafted = draft_follow_ups()
+    synced = None
+    mail = DB.setting("email_sync") or {}
+    if mail.get("enabled") and mail.get("secret"):
+        last = mail.get("last_sync")
+        if not last or datetime.fromisoformat(last) < datetime.now(timezone.utc) - timedelta(minutes=30):
+            try:
+                synced = sync_email()
+            except Exception:
+                synced = None
+    return {"deadline_alerts": fired, "follow_ups": drafted, "email": synced}
+
+
+FOLLOW_UP_DAYS = 14
+
+
+def draft_follow_ups() -> int:
+    """Two weeks after applying with no reply, a polite follow-up is drafted for review. Nothing is sent."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=FOLLOW_UP_DAYS)).isoformat()
+    due = DB.rows("""SELECT applications.id, applications.job_id, applications.submitted_at, jobs.company, jobs.role FROM applications JOIN jobs ON jobs.id=applications.job_id
+        WHERE applications.status IN ('APPLIED','SUBMITTED') AND applications.submitted_at IS NOT NULL AND applications.submitted_at < ?
+          AND applications.followed_up_at IS NULL AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.application_id=applications.id AND d.kind='FOLLOW_UP')""", (cutoff,))
+    name = next((f["value"] for f in facts() if f["category"] == "personal" and f["fact_key"] == "full_name" and f.get("status") == "VERIFIED"), None)
+    for app in due:
+        applied = datetime.fromisoformat(app["submitted_at"]).strftime("%d %B")
+        text = (f"Subject: Following up on my {app['role']} application\n\nHi {app['company']} recruiting team,\n\n"
+                f"I applied for the {app['role']} position on {applied} and wanted to follow up. I'm still very interested in the role and in {app['company']}'s work, "
+                f"and I'd be glad to share anything else that would help with your review.\n\nThank you for your time,\n{name or 'Your name'}")
+        draft_id = str(uuid.uuid4())
+        DB.execute("INSERT INTO drafts(id,kind,job_id,application_id,content,status,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                   (draft_id, "FOLLOW_UP", app["job_id"], app["id"], text, "DRAFT", "ApplyPilot", now(), now()))
+    if due:
+        notify("FOLLOW_UP", f"{len(due)} follow-up{'s' if len(due) > 1 else ''} ready", "Two weeks since you applied — review the drafts in your Inbox.", "Inbox")
+    return len(due)
+
+
+# ---------- email sync ----------
+
+def save_email_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    from . import email_sync
+
+    current = DB.setting("email_sync") or {}
+    provider = str(payload.get("provider") or current.get("provider") or "GMAIL").upper()
+    if provider not in email_sync.PRESETS:
+        raise ValueError("Unknown email provider")
+    host = str(payload.get("host") or email_sync.PRESETS[provider]["host"] or current.get("host") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", host):
+        raise ValueError("Enter your mail server's IMAP host, e.g. imap.example.com")
+    address = str(payload.get("address") if payload.get("address") is not None else current.get("address") or "").strip()
+    if address and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", address):
+        raise ValueError("Enter a valid email address")
+    updated = {**current, "provider": provider, "host": host, "port": int(payload.get("port") or email_sync.PRESETS[provider]["port"]), "address": address,
+               "enabled": bool(payload.get("enabled", current.get("enabled", False))), "last_error": None}
+    if payload.get("password"):
+        updated["secret"] = email_sync.protect(str(payload["password"]).replace(" ", "") if provider == "GMAIL" else str(payload["password"]))
+    if updated["enabled"] and not (updated.get("secret") and address):
+        raise ValueError("Add your email address and app password to turn on sync")
+    DB.set_setting("email_sync", updated)
+    return {"ok": True}
+
+
+def sync_email(fetch: Callable[..., list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+    from . import email_sync
+
+    config = DB.setting("email_sync") or {}
+    try:
+        if not config.get("secret") or not config.get("address"):
+            raise ValueError("Email sync isn't set up")
+        password = email_sync.unprotect(config["secret"])
+        messages = (fetch or email_sync.fetch_recent)(config, password)
+        seen = {r["message_id"] for r in DB.rows("SELECT message_id FROM email_events")}
+        apps = DB.rows("SELECT applications.id, applications.status, jobs.company, jobs.role FROM applications JOIN jobs ON jobs.id=applications.job_id")
+        moved = 0
+        for d in email_sync.decide(messages, apps, seen):
+            app = d["application"]
+            previous = None
+            if d["action"] == "MOVE" and app:
+                previous = DB.one("SELECT status FROM applications WHERE id=?", (app["id"],))["status"]
+                stamp = now()
+                DB.execute("UPDATE applications SET previous_status=?, status=?, status_note=?, updated_at=?, submitted_at=CASE WHEN ? IN ('APPLIED','INTERVIEWING','OFFER','REJECTED') THEN coalesce(submitted_at, ?) ELSE submitted_at END WHERE id=?",
+                           (previous, d["target"], f"From email: {d['subject'][:120]}", stamp, d["target"], stamp, app["id"]))
+                moved += 1
+                label = {"INTERVIEWING": "Interview", "OFFER": "Offer", "REJECTED": "Rejection", "APPLIED": "Application received"}[d["target"]]
+                notify("EMAIL", f"{label}: {app['company']}", d["subject"][:140], "Tracker")
+            DB.execute("INSERT OR IGNORE INTO email_events(id,message_id,received_at,sender,subject,kind,application_id,action,previous_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       (str(uuid.uuid4()), d["message_id"], d.get("date"), d["sender"][:200], d["subject"][:300], d["kind"], app["id"] if app else None, d["action"], previous, now()))
+        DB.set_setting("email_sync", {**config, "last_sync": now(), "last_error": None})
+        DB.log("EMAIL_SYNCED", details={"messages": len(messages), "moved": moved})
+        return {"ok": True, "messages": len(messages), "moved": moved}
+    except Exception as exc:
+        DB.set_setting("email_sync", {**config, "last_sync": now(), "last_error": str(exc)[:300]})
+        raise ValueError(f"Email sync failed: {exc}") from exc
+
+
+def undo_email_move(event_id: str) -> dict[str, Any]:
+    event = one("SELECT * FROM email_events WHERE id=? AND action='MOVE'", (event_id,))
+    DB.execute("UPDATE applications SET status=?, status_note=NULL, updated_at=? WHERE id=?", (event["previous_status"], now(), event["application_id"]))
+    DB.execute("UPDATE email_events SET action='UNDONE' WHERE id=?", (event_id,))
+    return {"ok": True}
+
+
+def email_events() -> list[dict[str, Any]]:
+    return DB.rows("""SELECT email_events.*, jobs.company, jobs.role FROM email_events LEFT JOIN applications ON applications.id=email_events.application_id
+        LEFT JOIN jobs ON jobs.id=applications.job_id ORDER BY email_events.created_at DESC LIMIT 60""")
+
+
+# ---------- companies, referrals, prep ----------
+
+def companies() -> list[dict[str, Any]]:
+    jobs = decoded(DB.rows("SELECT jobs.id, company, role, duplicate_of, date_found, e.score_json FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id"))
+    apps = DB.rows("SELECT applications.status, jobs.company FROM applications JOIN jobs ON jobs.id=applications.job_id")
+    watch = {insights.company_key(w["company"]): w for w in DB.rows("SELECT * FROM watchlist")}
+    people = {}
+    for c in DB.rows("SELECT company_key FROM connections"):
+        people[c["company_key"]] = people.get(c["company_key"], 0) + 1
+    notes = {n["company_key"] for n in DB.rows("SELECT company_key FROM company_notes WHERE notes != ''")}
+    grouped: dict[str, dict[str, Any]] = {}
+    for job in jobs:
+        key = insights.company_key(job.get("company"))
+        if not key:
+            continue
+        g = grouped.setdefault(key, {"key": key, "name": job.get("company"), "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": ""})
+        if not job.get("duplicate_of"):
+            g["jobs"] += 1
+        g["best_score"] = max(g["best_score"], (job.get("score") or {}).get("score", 0))
+        g["last_seen"] = max(g["last_seen"], job.get("date_found") or "")
+    for key, w in watch.items():
+        grouped.setdefault(key, {"key": key, "name": w["company"], "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": w.get("last_scanned_at") or ""})
+    for app in apps:
+        key = insights.company_key(app["company"])
+        if key in grouped:
+            grouped[key]["applications"] += 1
+            grouped[key]["statuses"][app["status"]] = grouped[key]["statuses"].get(app["status"], 0) + 1
+    for key, g in grouped.items():
+        g.update({"followed": key in watch, "platform": (watch.get(key) or {}).get("platform"), "watch_id": (watch.get(key) or {}).get("id"),
+                  "connections": sum(n for k, n in people.items() if k == key or (len(key) >= 4 and (f" {key} " in f" {k} " or f" {k} " in f" {key} "))), "has_notes": key in notes})
+    return sorted(grouped.values(), key=lambda g: (-g["applications"], -g["best_score"], g["name"] or ""))
+
+
+def company_detail(key: str) -> dict[str, Any]:
+    overview = next((c for c in companies() if c["key"] == key), None)
+    if not overview:
+        raise NotFound("Company not found")
+    jobs = [j for j in decoded(DB.rows("""SELECT jobs.id, company, role, location, date_posted, date_found, deadline, posting_url, duplicate_of, e.result AS eligibility_result, e.score_json
+        FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id ORDER BY date_found DESC""")) if insights.company_key(j.get("company")) == key]
+    ids = {j["id"] for j in jobs}
+    apps = [a for a in DB.rows("SELECT applications.id, applications.job_id, applications.status, applications.submitted_at, applications.updated_at, jobs.role FROM applications JOIN jobs ON jobs.id=applications.job_id") if a["job_id"] in ids]
+    seasons = [0] * 12
+    for j in jobs:
+        stamp = j.get("date_posted") or j.get("date_found")
+        if stamp:
+            seasons[int(stamp[5:7]) - 1] += 1
+    notes = DB.one("SELECT notes FROM company_notes WHERE company_key=?", (key,))
+    return {**overview, "roles": jobs, "application_history": apps, "people": referrals.matches(overview["name"], DB.rows("SELECT * FROM connections")), "notes": notes["notes"] if notes else "", "seasons": seasons}
+
+
+def save_company_notes(key: str, name: str, notes: str) -> dict[str, Any]:
+    DB.execute("INSERT INTO company_notes(company_key,company,notes,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_key) DO UPDATE SET notes=excluded.notes,updated_at=excluded.updated_at",
+               (key, name, notes[:20_000], now()))
+    return {"ok": True}
+
+
+def import_connections(csv_text: str) -> dict[str, Any]:
+    rows = referrals.parse_connections_csv(csv_text)
+    DB.execute("DELETE FROM connections")
+    for r in rows:
+        DB.execute("INSERT INTO connections(id,first_name,last_name,url,email,company,company_key,position,connected_on,imported_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                   (str(uuid.uuid4()), r["first_name"], r["last_name"], r["url"], r["email"], r["company"], r["company_key"], r["position"], r["connected_on"], now()))
+    companies_known = {insights.company_key(j["company"]) for j in DB.rows("SELECT DISTINCT company FROM jobs")}
+    matched = {r["company_key"] for r in rows if r["company_key"] in companies_known}
+    DB.log("CONNECTIONS_IMPORTED", details={"connections": len(rows), "matched_companies": len(matched)})
+    return {"connections": len(rows), "matched_companies": len(matched)}
+
+
+def referral_message(job_id: str, connection_id: str) -> dict[str, Any]:
+    job = one("SELECT company, role, posting_url FROM jobs WHERE id=?", (job_id,))
+    person = one("SELECT * FROM connections WHERE id=?", (connection_id,))
+    name = next((f["value"] for f in facts() if f["category"] == "personal" and f["fact_key"] == "full_name" and f.get("status") == "VERIFIED"), None)
+    return {"message": referrals.referral_message(person, job, name), "url": person.get("url")}
+
+
+def prep_pack(job_id: str) -> dict[str, Any]:
+    from .prep import build_pack
+
+    job = one("SELECT * FROM jobs WHERE id=?", (job_id,))
+    notes = DB.one("SELECT notes FROM company_notes WHERE company_key=?", (insights.company_key(job.get("company")),))
+    pack = build_pack(job, facts(), notes["notes"] if notes else "")
+    pack["people"] = referrals.matches(job.get("company"), DB.rows("SELECT * FROM connections"))[:5]
+    return pack
+
+
+# ---------- offers ----------
+
+def offers_overview(base: str) -> dict[str, Any]:
+    from .offers import CURRENCIES, compare, fetch_rates
+
+    rows = decoded(DB.rows("SELECT * FROM offers ORDER BY created_at"))
+    if not rows:
+        return {"base": base, "rows": [], "currencies": CURRENCIES, "rates_source": None}
+    rates = fetch_rates()
+    return {"base": base, "rows": compare(rows, base, rates["rates"]), "currencies": CURRENCIES, "rates_source": rates.get("source"), "rates_updated": rates.get("updated")}
+
+
+def save_offer(payload: dict[str, Any]) -> dict[str, Any]:
+    from .offers import CURRENCIES
+
+    company = str(payload.get("company") or "").strip()
+    if not company:
+        raise ValueError("Company is required")
+    try:
+        amount = float(payload.get("amount"))
+    except (TypeError, ValueError):
+        raise ValueError("Enter the stipend or salary as a number") from None
+    if amount <= 0 or amount > 10_000_000:
+        raise ValueError("Enter a realistic amount")
+    currency = str(payload.get("currency") or "").upper()
+    if currency not in CURRENCIES:
+        raise ValueError("Choose a currency")
+    period = str(payload.get("period") or "MONTH").upper()
+    if period not in {"HOUR", "WEEK", "MONTH", "YEAR", "TOTAL"}:
+        raise ValueError("Choose how the amount is paid")
+    perks = {k: float(v) for k, v in (payload.get("perks") or {}).items() if str(v).strip() and re.fullmatch(r"[a-z_]{2,20}", k)}
+    offer_id = payload.get("id") or str(uuid.uuid4())
+    DB.execute("""INSERT INTO offers(id,application_id,company,role,location,amount,currency,period,hours_per_week,duration_months,perks_json,decision_deadline,notes,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET company=excluded.company,role=excluded.role,location=excluded.location,amount=excluded.amount,currency=excluded.currency,
+        period=excluded.period,hours_per_week=excluded.hours_per_week,duration_months=excluded.duration_months,perks_json=excluded.perks_json,decision_deadline=excluded.decision_deadline,notes=excluded.notes,updated_at=excluded.updated_at""",
+               (offer_id, payload.get("application_id"), company, str(payload.get("role") or ""), str(payload.get("location") or ""), amount, currency, period,
+                float(payload.get("hours_per_week") or 40), float(payload.get("duration_months") or 3), json.dumps(perks), payload.get("decision_deadline") or None, str(payload.get("notes") or ""), now(), now()))
+    return {"id": offer_id}
+
+
+# ---------- calendar, insights, search ----------
+
+def calendar() -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    for j in DB.rows("SELECT id, company, role, date_posted, deadline FROM jobs WHERE duplicate_of IS NULL"):
+        if j.get("date_posted"):
+            events.append({"date": j["date_posted"][:10], "kind": "POSTED", "title": f"{j['company']} opened {j['role']}", "job_id": j["id"]})
+        if j.get("deadline"):
+            events.append({"date": j["deadline"][:10], "kind": "DEADLINE", "title": f"{j['company']} closes {j['role']}", "job_id": j["id"]})
+    for a in DB.rows("SELECT applications.job_id, applications.submitted_at, jobs.company, jobs.role FROM applications JOIN jobs ON jobs.id=applications.job_id WHERE submitted_at IS NOT NULL"):
+        events.append({"date": a["submitted_at"][:10], "kind": "APPLIED", "title": f"Applied to {a['company']}", "job_id": a["job_id"]})
+    for log in DB.rows("SELECT timestamp, entity_id, details_json FROM activity_log WHERE action='APPLICATION_STATUS_CHANGED' AND details_json LIKE '%INTERVIEWING%'"):
+        job = DB.one("SELECT jobs.id, company FROM applications JOIN jobs ON jobs.id=applications.job_id WHERE applications.id=?", (log["entity_id"],))
+        if job:
+            events.append({"date": log["timestamp"][:10], "kind": "INTERVIEW", "title": f"Interview stage at {job['company']}", "job_id": job["id"]})
+    seasons = []
+    for w in DB.rows("SELECT company FROM watchlist ORDER BY company"):
+        key = insights.company_key(w["company"])
+        months = [0] * 12
+        for j in DB.rows("SELECT company, date_posted, date_found FROM jobs"):
+            if insights.company_key(j["company"]) == key:
+                stamp = j.get("date_posted") or j.get("date_found")
+                if stamp:
+                    months[int(stamp[5:7]) - 1] += 1
+        seasons.append({"company": w["company"], "months": months})
+    return {"events": sorted(events, key=lambda e: e["date"]), "seasons": seasons}
+
+
+def insights_overview() -> dict[str, Any]:
+    jobs = decoded(DB.rows("""SELECT jobs.*, e.result AS eligibility_result, e.checks_json AS eligibility_checks_json, e.match_json AS eligibility_match_json
+        FROM jobs JOIN eligibility_results e ON e.job_id=jobs.id WHERE jobs.duplicate_of IS NULL"""))
+    return {"coach": insights.coach(jobs, facts(), AUTOPILOT.config()["min_score"])}
+
+
+def search_jobs(query: str) -> dict[str, Any]:
+    jobs = decoded(DB.rows("""SELECT jobs.id, company, role, location, country, description, required_skills_json, preferred_skills_json, duplicate_of, application_platform, e.score_json
+        FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id"""))
+    result = insights.search(jobs, query)
+    config = ai_config()
+    if result["ids"] and ai.status(config).get("available"):
+        try:  # optional semantic re-rank with a local embedding model
+            top = {j["id"]: j for j in jobs if j["id"] in set(result["ids"][:60])}
+            order = [i for i in result["ids"][:60]]
+            vectors = ai.embed(config, [query] + [f"{top[i]['role']} at {top[i]['company']}. {(top[i].get('description') or '')[:600]}" for i in order])
+            if vectors:
+                q = vectors[0]
+                norm = lambda v: sum(x * x for x in v) ** 0.5 or 1.0  # noqa: E731
+                sims = {i: sum(a * b for a, b in zip(q, v)) / (norm(q) * norm(v)) for i, v in zip(order, vectors[1:])}
+                result["ids"] = sorted(order, key=lambda i: -sims[i]) + result["ids"][60:]
+                result["semantic"] = True
+        except Exception:
+            pass
+    return result
+
+
+# ---------- tailored CVs ----------
+
+def _verified_skills() -> list[str]:
+    for f in facts():
+        if f["category"] == "skills" and f.get("status") == "VERIFIED" and isinstance(f.get("value"), list):
+            return [str(v) for v in f["value"]]
+    return []
+
+
+def _source_cv_text(draft: dict[str, Any]) -> str:
+    source_id = str(draft.get("question") or "").removeprefix("cv:")
+    cv = one("SELECT path FROM cvs WHERE id=?", (source_id,))
+    return cv_tailor.cv_text(cv["path"])
+
+
+def tailor_cv(job_id: str, use_ai: bool) -> dict[str, Any]:
+    job = one("SELECT * FROM jobs WHERE id=?", (job_id,))
+    cv = approved_cv()
+    if not cv:
+        raise ValueError("Approve a CV in the CV Library first")
+    original = cv_tailor.cv_text(cv["path"])
+    if len(original) < 200:
+        raise ValueError("ApplyPilot couldn't read enough text from your CV PDF (is it a scanned image?)")
+    if use_ai:
+        result = ai.tailor_cv(ai_config(), original, job)
+        tailored, model = result["content"], result["model"]
+    else:
+        tailored, model = cv_tailor.tailor_deterministic(original, job), "ApplyPilot"
+    draft_id = str(uuid.uuid4())
+    DB.execute("INSERT INTO drafts(id,kind,job_id,question,content,status,model,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+               (draft_id, "CV_TAILORED", job_id, f"cv:{cv['id']}", tailored, "DRAFT", model, now(), now()))
+    return {"id": draft_id, "original": original, "content": tailored, "model": model, "flags": cv_tailor.invention_flags(original, tailored, _verified_skills())}
+
+
+def tailored_diff(draft_id: str) -> dict[str, Any]:
+    draft = one("SELECT drafts.*, jobs.company, jobs.role FROM drafts LEFT JOIN jobs ON jobs.id=drafts.job_id WHERE drafts.id=? AND kind='CV_TAILORED'", (draft_id,))
+    original = _source_cv_text(draft)
+    return {**draft, "original": original, "flags": cv_tailor.invention_flags(original, draft["content"], _verified_skills())}
+
+
+def finalize_tailored_cv(draft: dict[str, Any]) -> dict[str, Any]:
+    from .browser_runner import find_edge
+
+    source_id = str(draft.get("question") or "").removeprefix("cv:")
+    source = one("SELECT * FROM cvs WHERE id=?", (source_id,))
+    job = one("SELECT company, role FROM jobs WHERE id=?", (draft["job_id"],))
+    edge = find_edge()
+    if not edge:
+        raise ValueError("Microsoft Edge is needed to create the PDF")
+    cv_id = str(uuid.uuid4())
+    path = DB.path.parent / "uploads" / "cvs" / f"{cv_id}.pdf"
+    cv_tailor.render_pdf(draft["content"], f"CV — {job['company']}", path, edge)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    version = (DB.one("SELECT MAX(version) AS v FROM cvs WHERE id=? OR original_id=?", (source["original_id"] or source_id, source["original_id"] or source_id))["v"] or 1) + 1
+    name = f"{Path(source['name']).stem} — {job['company']}.pdf"
+    DB.execute("INSERT INTO cvs(id,name,variant,original_id,version,path,sha256,is_original,approved,extracted_profile_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+               (cv_id, name, f"Tailored for {job['company']} · {job['role']}", source["original_id"] or source_id, version, str(path), digest, 0, 1, "{}", now()))
+    DB.execute("UPDATE applications SET cv_id=?, updated_at=? WHERE job_id=? AND status IN ('QUEUED','NEEDS_INFO','WAITING_FOR_USER','READY_FOR_REVIEW')", (cv_id, now(), draft["job_id"]))
+    reprepare_active()
+    DB.log("CV_TAILORED", "cv", cv_id, {"job": job["company"], "version": version})
+    return {"id": cv_id, "name": name}

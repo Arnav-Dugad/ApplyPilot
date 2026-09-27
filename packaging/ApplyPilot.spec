@@ -9,8 +9,9 @@ a = Analysis(
     datas=[
         (str(ROOT / "dist"), "dist"),
         (str(ROOT / "backend" / "schema.sql"), "backend"),
+        (str(ROOT / "packaging" / "applypilot.png"), "assets"),
     ],
-    hiddenimports=["backend.server", "backend.browser_runner", "pypdf", "playwright.sync_api"],
+    hiddenimports=["backend.server", "backend.browser_runner", "pypdf", "playwright.sync_api", "pystray._win32", "PIL.Image"],
     excludes=["tkinter", "backend.tests"],
     noarchive=False,
 )

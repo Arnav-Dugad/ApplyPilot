@@ -101,6 +101,14 @@ def _debug_port_file() -> Path:
     return data_dir() / "browser" / "debug-port"
 
 
+def edge_profile_in_use() -> bool:
+    port_file = _debug_port_file()
+    try:
+        return port_file.exists() and _port_open(int(port_file.read_text() or 0))
+    except ValueError:
+        return False
+
+
 def ensure_browser(url: str) -> int:
     """Reuses ApplyPilot's Edge window if it is open, otherwise starts it. Returns the debugging port."""
     port_file = _debug_port_file()
@@ -126,7 +134,8 @@ def ensure_browser(url: str) -> int:
     raise RuntimeError("Edge did not start its automation port")
 
 
-def live_fill(url: str, facts: list[dict[str, Any]], country: str | None, answers: list[dict[str, Any]], context: dict[str, Any], *, on_event: Callable[[str, str], None] | None = None) -> dict[str, Any]:
+def live_fill(url: str, facts: list[dict[str, Any]], country: str | None, answers: list[dict[str, Any]], context: dict[str, Any], *, on_event: Callable[[str, str], None] | None = None,
+              dock: Callable[[], dict[str, int] | None] | None = None) -> dict[str, Any]:
     """Opens the application in Edge, fills verified answers, highlights what needs the user, and leaves the window open."""
     emit = on_event or (lambda _step, _message: None)
     try:
@@ -143,12 +152,13 @@ def live_fill(url: str, facts: list[dict[str, Any]], country: str | None, answer
         if page.url.split("#")[0] != url.split("#")[0]:
             page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         page.bring_to_front()
+        _split_screen(page, dock)
         try:
             page.wait_for_load_state("networkidle", timeout=12_000)
         except Exception:
             pass
         _reveal_application_form(page, emit)
-        pause = detect_pause_reason(page.locator("body").inner_text(timeout=5_000))
+        pause = page_blocker(page)
         if pause:
             emit("pause", pause)
             return {"status": "WAITING_FOR_USER", "reason": pause, "fields": [], "filled_count": 0, "unknown_count": 0, "submission_attempted": False}
@@ -170,6 +180,7 @@ def live_fill(url: str, facts: list[dict[str, Any]], country: str | None, answer
                 _fill(page, nodes, item, decision, context)
                 _mark(first, "fill")
                 filled += 1
+                emit("field", f"Filled “{field['label'][:60]}”")
             except Exception as exc:
                 failed += 1
                 decision.update({"action": "PAUSE", "reason": f"Couldn't fill automatically ({type(exc).__name__}); please complete this one."})
@@ -182,6 +193,45 @@ def live_fill(url: str, facts: list[dict[str, Any]], country: str | None, answer
         page.bring_to_front()
         # Leaving this block disconnects Playwright; the Edge window stays open for the user.
         return plan
+
+
+CHALLENGE_SCRIPT = r"""() => {
+  const visible = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 60 && r.height > 40 && s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0'; };
+  const frames = Array.from(document.querySelectorAll('iframe')).filter(f => visible(f));
+  const challenge = frames.find(f => /recaptcha\/(api2|enterprise)\/bframe|hcaptcha\.com\/.*(challenge|checkbox)|challenges\.cloudflare\.com/.test(f.src)
+    || (/recaptcha\/(api2|enterprise)\/anchor/.test(f.src) && !/size=invisible/.test(f.src)));
+  const text = (document.body.innerText || '').toLowerCase();
+  return Boolean(challenge) || /verify you are human|checking your browser|i.m not a robot/.test(text);
+}"""
+
+
+def page_blocker(page: Any) -> str | None:
+    """A visible CAPTCHA challenge or a sign-in/MFA step. The invisible reCAPTCHA badge on most forms does not count."""
+    try:
+        if page.evaluate(CHALLENGE_SCRIPT):
+            return "A CAPTCHA is showing. Complete it in Edge, then continue."
+    except Exception:
+        pass
+    text = page.locator("body").inner_text(timeout=5_000).lower()
+    if any(marker in text for marker in MFA_MARKERS):
+        return "Authentication or MFA detected. Complete it manually, then resume."
+    return None
+
+
+def _split_screen(page: Any, dock: Callable[[], dict[str, int] | None] | None) -> None:
+    """ApplyPilot docks on the left and the application opens beside it in Edge."""
+    if not dock:
+        return
+    try:
+        bounds = dock()
+        if not bounds:
+            return
+        cdp = page.context.new_cdp_session(page)
+        window = cdp.send("Browser.getWindowForTarget")["windowId"]
+        cdp.send("Browser.setWindowBounds", {"windowId": window, "bounds": {"windowState": "normal"}})
+        cdp.send("Browser.setWindowBounds", {"windowId": window, "bounds": bounds})
+    except Exception:
+        pass
 
 
 def _reveal_application_form(page: Any, emit: Callable[[str, str], None]) -> None:

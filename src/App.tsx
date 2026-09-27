@@ -1,29 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, BarChart3, Bell, BookOpenCheck, Command, FileText, Gauge, Inbox as InboxIcon, LayoutDashboard, ListChecks, Moon, Octagon, Play, Search, Settings, ShieldCheck, Sun, UserRound, Zap } from 'lucide-react'
+import { Activity, BarChart3, Bell, BookOpenCheck, Building2, CalendarDays, Command, FileText, Gauge, HandCoins, Inbox as InboxIcon, LayoutDashboard, ListChecks, Moon, Octagon, Play, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Sun, UserRound, Zap } from 'lucide-react'
 import { api } from './api'
 import { JobDrawer } from './JobDrawer'
+import { Modal } from './components/Modal'
+import { ReleaseNotes, UpdateBanner } from './components/UpdateBanner'
 import type { Bootstrap } from './types'
 import { ACTIVE_STATUSES, ActivityList, Logo, NotifyProvider, PageHeading, relativeTime, useNotify, type Page } from './ui'
-import { Analytics } from './pages/Analytics'
 import { AnswerVault } from './pages/AnswerVault'
 import { Autopilot } from './pages/Autopilot'
+import { Calendar } from './pages/Calendar'
+import { Companies } from './pages/Companies'
 import { CVLibrary } from './pages/CVLibrary'
 import { Discover } from './pages/Discover'
 import { Home } from './pages/Home'
 import { Inbox } from './pages/Inbox'
+import { Insights } from './pages/Insights'
+import { Offers } from './pages/Offers'
 import { Profile } from './pages/Profile'
 import { Queue } from './pages/Queue'
 import { SettingsPage } from './pages/Settings'
 import { Tracker } from './pages/Tracker'
 import { Wizard } from './pages/Wizard'
 
-const navigation: [Page, typeof LayoutDashboard][] = [
-  ['Home', LayoutDashboard], ['Autopilot', Zap], ['Inbox', InboxIcon], ['Discover', Search], ['Queue', ListChecks], ['Tracker', Gauge],
-  ['CV Library', FileText], ['Profile', UserRound], ['Answer Vault', BookOpenCheck], ['Analytics', BarChart3], ['Activity', Activity], ['Settings', Settings],
+const SECTIONS: [string, [Page, typeof LayoutDashboard, string?][]][] = [
+  ['Work', [['Home', LayoutDashboard, 'Today'], ['Autopilot', Zap], ['Inbox', InboxIcon], ['Discover', Search], ['Queue', ListChecks], ['Tracker', Gauge]]],
+  ['Explore', [['Insights', BarChart3], ['Companies', Building2], ['Calendar', CalendarDays], ['Offers', HandCoins]]],
+  ['You', [['Profile', UserRound], ['CV Library', FileText], ['Answer Vault', BookOpenCheck], ['Activity', Activity], ['Settings', Settings]]],
 ]
+const navigation = SECTIONS.flatMap(([, items]) => items)
 const initial: Bootstrap = {
   settings: {}, facts: [], jobs: [], applications: [], activity: [], cvs: [], answers: [], watchlist: [], catalog: [], notifications: [],
-  inbox: { questions: [], suggestions: [], drafts: [] },
+  inbox: { questions: [], suggestions: [], drafts: [] }, today: [], health: [],
   autopilot: { config: { enabled: false, interval_hours: 6, min_score: 60, auto_queue: true, auto_prepare: true, location_filter: true, internships_only: true, ai_summaries: true, ai_cover_letters: false }, running: null, next_run_at: null, runs: [] },
 }
 const THEME_KEY = 'applypilot.theme'
@@ -59,12 +66,16 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [askQuery, setAskQuery] = useState<{ q: string; n: number } | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
   const setDark = (value: boolean) => { setDarkState(value); try { localStorage.setItem(THEME_KEY, value ? 'dark' : 'light') } catch { /* preference is optional */ } }
   const go = useCallback((p: Page) => { setPage(p); document.querySelector('main')?.scrollTo({ top: 0 }) }, [])
 
   const commands = useMemo(() => [
     { label: 'Run Autopilot now', hint: 'Action', icon: Play, run: async () => { try { await api.runAutopilot(); notify('Autopilot is scanning your companies…'); setPage('Autopilot'); await refresh() } catch (e) { notify(e instanceof Error ? e.message : 'Could not start', 'bad') } } },
-    ...navigation.map(([name, Icon]) => ({ label: name, hint: 'Open', icon: Icon, run: () => go(name) })),
+    ...navigation.map(([name, Icon, label]) => ({ label: label ?? name, hint: 'Open', icon: Icon, run: () => go(name) })),
+    ...(query.trim().split(/\s+/).length >= 2 ? [{ label: `Search: “${query.trim()}”`, hint: 'Ask', icon: Sparkles, run: () => ask(query.trim()) }] : []),
+    { label: 'Check for updates', hint: 'Action', icon: RefreshCw, run: async () => { const r = await api.checkUpdate(); notify(r.status === 'available' ? `ApplyPilot ${r.latest} is available` : r.status === 'up_to_date' ? 'ApplyPilot is up to date' : r.error ?? 'Checked'); await refresh() } },
     ...data.jobs.slice(0, 200).map(j => ({ label: `${j.role} · ${j.company}`, hint: `${j.score?.score ?? '—'}`, icon: Search, run: () => setJobId(j.id) })),
     { label: dark ? 'Switch to light mode' : 'Switch to dark mode', hint: 'Theme', icon: dark ? Sun : Moon, run: () => setDark(!dark) },
   ].filter(c => c.label.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12), [query, dark, data.jobs, go, notify, refresh])
@@ -80,8 +91,10 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
   useEffect(() => { if (palette) { setQuery(''); setSelected(0) } }, [palette])
   useEffect(() => { document.documentElement.style.colorScheme = dark ? 'dark' : 'light' }, [dark])
 
+  const ask = useCallback((q: string) => { setAskQuery({ q, n: Date.now() }); setPage('Discover'); setJobId(null) }, [])
+
   // Stream progress while something is working; otherwise check in quietly for scheduled runs.
-  const busy = Boolean(data.autopilot.running) || data.applications.some(a => a.browser_run?.status === 'RUNNING')
+  const busy = Boolean(data.autopilot.running) || data.applications.some(a => a.browser_run?.status === 'RUNNING') || ['downloading', 'verifying', 'ready', 'installing'].includes(data.update?.status ?? '')
   const wasBusy = useRef(busy)
   useEffect(() => {
     const id = setInterval(refresh, busy ? 1500 : 15000)
@@ -93,24 +106,29 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
   const choose = (index: number) => { commands[index]?.run(); setPalette(false) }
   const active = data.applications.filter(a => ACTIVE_STATUSES.includes(a.status)).length
   const inboxCount = data.inbox.questions.length + data.inbox.suggestions.length + data.inbox.drafts.length
-  const props = { data, refresh, go, openJob: setJobId }
+  const props = { data, refresh, go, openJob: setJobId, ask }
   const running = Boolean(data.autopilot.running)
 
   return <div className={dark ? 'app dark' : 'app light'}>
-    <aside><Logo /><nav>{navigation.map(([name, Icon]) => <button key={name} className={page === name ? 'active' : ''} onClick={() => go(name)}><Icon size={18} />{name}
+    <aside><Logo /><nav>{SECTIONS.map(([section, items]) => <div key={section} className="nav-section"><span className="nav-label">{section}</span>{items.map(([name, Icon, label]) => <button key={name} className={page === name ? 'active' : ''} onClick={() => go(name)}><Icon size={17} />{label ?? name}
       {name === 'Queue' && active > 0 && <em>{active}</em>}
       {name === 'Inbox' && inboxCount > 0 && <em className="attention-badge">{inboxCount}</em>}
+      {name === 'Home' && (data.today?.length ?? 0) > 0 && <em>{data.today!.length}</em>}
+      {name === 'Settings' && data.update?.status === 'available' && <span className="nav-dot update" title="Update available" />}
       {name === 'Autopilot' && (running ? <span className="nav-pulse" title="Running" /> : data.autopilot.config.enabled && <span className="nav-dot" title="On" />)}
-    </button>)}</nav>
+    </button>)}</div>)}</nav>
       <div className="sidebar-foot"><div className="privacy"><ShieldCheck /><div><b>Local & private</b><span>Data stays on this device</span></div></div><button onClick={() => setDark(!dark)}>{dark ? <Sun /> : <Moon />}{dark ? 'Light mode' : 'Dark mode'}</button></div></aside>
     <main><div className="topbar"><button className="command-button" onClick={() => setPalette(true)}><Search />Search jobs, pages, actions…<kbd>Ctrl K</kbd></button>
       <div className="topbar-right"><button className="status" onClick={() => go('Autopilot')}><span className={`status-dot ${running ? 'running' : data.inbox.questions.length ? 'warn' : ''}`} /> {running ? (data.autopilot.runs[0]?.events.at(-1)?.message ?? 'Autopilot running') : data.autopilot.config.enabled ? `Autopilot on · next ${data.autopilot.next_run_at ? relativeTime(data.autopilot.next_run_at) : 'soon'}` : 'Autopilot off'}</button><Notifications data={data} refresh={refresh} go={go} /></div></div>
+      <UpdateBanner update={data.update} refresh={refresh} openNotes={() => setNotesOpen(true)} />
       <div className="content page-enter" key={page}>
-        {page === 'Home' ? <Home {...props} /> : page === 'Autopilot' ? <Autopilot {...props} /> : page === 'Inbox' ? <Inbox {...props} /> : page === 'Discover' ? <Discover {...props} /> : page === 'Queue' ? <Queue {...props} /> : page === 'Tracker' ? <Tracker {...props} />
+        {page === 'Home' ? <Home {...props} /> : page === 'Autopilot' ? <Autopilot {...props} /> : page === 'Inbox' ? <Inbox {...props} /> : page === 'Discover' ? <Discover key={askQuery?.n ?? 0} {...props} askQuery={askQuery?.q} /> : page === 'Queue' ? <Queue {...props} /> : page === 'Tracker' ? <Tracker {...props} />
+          : page === 'Insights' ? <Insights {...props} /> : page === 'Companies' ? <Companies {...props} /> : page === 'Calendar' ? <Calendar {...props} /> : page === 'Offers' ? <Offers {...props} />
           : page === 'CV Library' ? <CVLibrary {...props} /> : page === 'Profile' ? <Profile {...props} /> : page === 'Answer Vault' ? <AnswerVault {...props} />
-          : page === 'Analytics' ? <Analytics {...props} /> : page === 'Activity' ? <ActivityPage data={data} /> : <SettingsPage {...props} dark={dark} setDark={setDark} />}
+          : page === 'Activity' ? <ActivityPage data={data} /> : <SettingsPage {...props} dark={dark} setDark={setDark} />}
       </div></main>
-    {jobId && <JobDrawer jobId={jobId} data={data} refresh={refresh} close={() => setJobId(null)} go={go} />}
+    {jobId && <JobDrawer jobId={jobId} data={data} refresh={refresh} close={() => setJobId(null)} go={go} openJob={setJobId} />}
+    {notesOpen && data.update?.notes && <Modal title={`What’s new in ApplyPilot ${data.update.latest}`} onClose={() => setNotesOpen(false)}><ReleaseNotes notes={data.update.notes} /></Modal>}
     {palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={e => e.stopPropagation()}>
       <div><Command /><input autoFocus value={query} placeholder="Search jobs, pages, or actions…" onChange={e => { setQuery(e.target.value); setSelected(0) }}
         onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelected(s => Math.min(s + 1, commands.length - 1)) } if (e.key === 'ArrowUp') { e.preventDefault(); setSelected(s => Math.max(s - 1, 0)) } if (e.key === 'Enter') choose(selected) }} /></div>

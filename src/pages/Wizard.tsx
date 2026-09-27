@@ -5,14 +5,21 @@ import type { Fact } from '../types'
 import { Badge, Logo } from '../ui'
 
 const list = (text: string) => text.split(',').map(x => x.trim()).filter(Boolean)
+const LOCATION_CHIPS = ['India', 'United States', 'UK', 'Europe', 'Canada', 'Singapore', 'UAE', 'Saudi Arabia', 'Australia', 'Remote']
+const LANGUAGE_CHIPS = ['English', 'Hindi', 'Arabic', 'French', 'German', 'Spanish', 'Mandarin', 'Tamil']
 
 export function Wizard({ onComplete }: { onComplete: () => Promise<void> }) {
   const [step, setStep] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cv, setCV] = useState<{ name: string; base64: string } | null>(null)
-  const [form, setForm] = useState({ name: '', email: '', university: 'Manipal Institute of Technology', degree: 'Computer Science', graduation: '', skills: '', locations: 'India, UAE, Saudi Arabia, Qatar, Bahrain, Kuwait, Oman, Europe, UK, Singapore' })
-  const steps = ['Welcome', 'Import CV', 'Review profile', 'Verify education', 'Verify skills', 'Locations', 'Work authorization', 'Sponsorship', 'Preferences', 'Answer Vault', 'Local AI', 'Safety check']
+  const [form, setForm] = useState({ name: '', email: '', university: '', degree: '', graduation: '', skills: '', locations: '', languages: '' })
+  const steps = ['Welcome', 'Import CV', 'Review profile', 'Verify education', 'Verify skills', 'Locations & languages', 'Work authorization', 'Sponsorship', 'Preferences', 'Answer Vault', 'Local AI', 'Safety check']
+  const toggleChip = (key: 'locations' | 'languages', value: string) => {
+    const items = list(form[key])
+    const next = items.some(i => i.toLowerCase() === value.toLowerCase()) ? items.filter(i => i.toLowerCase() !== value.toLowerCase()) : [...items, value]
+    setForm({ ...form, [key]: next.join(', ') })
+  }
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [key]: e.target.value })
   const fact = (category: string, fact_key: string, value: unknown, present: boolean): Fact =>
     ({ category, fact_key, value: present ? value : null, status: present ? 'VERIFIED' : 'UNKNOWN', source: 'FIRST_RUN_WIZARD' })
@@ -30,6 +37,7 @@ export function Wizard({ onComplete }: { onComplete: () => Promise<void> }) {
         fact('education', 'graduation_date', form.graduation, Boolean(form.graduation)),
         fact('skills', 'verified_skills', list(form.skills), list(form.skills).length > 0),
         fact('preferences', 'locations', list(form.locations), list(form.locations).length > 0),
+        fact('languages', 'spoken', list(form.languages), list(form.languages).length > 0),
       ]
       for (const entry of entries) await api.saveFact(entry)
       await api.settings({ first_run_complete: true })
@@ -57,7 +65,12 @@ export function Wizard({ onComplete }: { onComplete: () => Promise<void> }) {
       {step === 2 && <div className="fields"><label>Full legal name<input value={form.name} onChange={set('name')} placeholder="Not stored until you finish" autoFocus /></label><label>Email<input value={form.email} onChange={set('email')} type="email" /></label></div>}
       {step === 3 && <div className="fields"><label>University<input value={form.university} onChange={set('university')} /></label><label>Degree<input value={form.degree} onChange={set('degree')} /></label><label>Graduation date<input value={form.graduation} onChange={set('graduation')} type="month" /></label></div>}
       {step === 4 && <label className="field-full">Verified skills, comma separated<textarea value={form.skills} onChange={set('skills')} placeholder="Java, Python, Git, Data Structures" /></label>}
-      {step === 5 && <label className="field-full">Enabled locations<textarea value={form.locations} onChange={set('locations')} /></label>}
+      {step === 5 && <div className="fields single">
+        <label className="field-full">Where would you work? Countries or regions, comma separated<textarea value={form.locations} onChange={set('locations')} placeholder="India, UK, Europe, Singapore" /></label>
+        <div className="chip-row">{LOCATION_CHIPS.map(c => <button key={c} type="button" className={list(form.locations).some(i => i.toLowerCase() === c.toLowerCase()) ? 'on' : ''} onClick={() => toggleChip('locations', c)}>{c}</button>)}</div>
+        <label className="field-full">Languages you speak (besides English)<input value={form.languages} onChange={set('languages')} placeholder="Hindi, German" /></label>
+        <div className="chip-row">{LANGUAGE_CHIPS.map(c => <button key={c} type="button" className={list(form.languages).some(i => i.toLowerCase() === c.toLowerCase()) ? 'on' : ''} onClick={() => toggleChip('languages', c)}>{c}</button>)}</div>
+      </div>}
       {(step === 6 || step === 7) && <div className="attention"><AlertTriangle /><div><b>Country-specific and currently unknown</b><p>ApplyPilot asks separately for every country and never copies citizenship, residence, authorization, or sponsorship answers between countries. Set them per country in Profile → Work authorization.</p></div></div>}
       {step === 8 && <div className="choice-grid"><button className="choice active">Internships only<Check /></button><button className="choice">Remote or on-site</button><button className="choice">Review before submit<Check /></button></div>}
       {step === 9 && <div className="attention"><CircleHelp /><div><b>Sensitive answers start as Manual Only</b><p>You can approve exact recurring answers later, with country and company scope.</p></div></div>}
