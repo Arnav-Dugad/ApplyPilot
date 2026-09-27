@@ -3,8 +3,8 @@ import { Activity as ActivityIcon, BriefcaseBusiness, ChevronRight, Sparkles } f
 import { ScoreRing } from './motion'
 import type { Activity, Bootstrap, EligibilityResult, Job } from './types'
 
-export type Page = 'Home' | 'Autopilot' | 'Inbox' | 'Discover' | 'Queue' | 'Tracker' | 'CV Library' | 'Profile' | 'Answer Vault' | 'Analytics' | 'Activity' | 'Settings'
-export type PageProps = { data: Bootstrap; refresh: () => Promise<void>; go: (page: Page) => void; openJob: (id: string) => void }
+export type Page = 'Home' | 'Autopilot' | 'Inbox' | 'Discover' | 'Queue' | 'Tracker' | 'Insights' | 'Companies' | 'Calendar' | 'Offers' | 'CV Library' | 'Profile' | 'Answer Vault' | 'Activity' | 'Settings'
+export type PageProps = { data: Bootstrap; refresh: () => Promise<void>; go: (page: Page) => void; openJob: (id: string) => void; ask: (query: string) => void }
 export type Tone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {

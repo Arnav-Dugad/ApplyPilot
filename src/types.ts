@@ -14,6 +14,7 @@ export type Job = {
   compensation?: string | null; employment_type?: string | null; question_count?: number
   work_authorization?: string | null; sponsorship_information?: string | null
   eligibility_result?: EligibilityResult | null; eligibility_checks?: Check[]; eligibility_match?: Match; score?: Score | null; ai_summary?: AISummary | null
+  duplicate_of?: string | null; vote?: number | null; country_code?: string | null
 }
 export type FieldDecision = { action: 'FILL' | 'PAUSE' | 'SKIP'; value?: unknown; source?: string | null; reason: string; upload?: boolean }
 export type FieldResult = { selector: string; label: string; required: boolean; classification: string; options?: string[]; decision: FieldDecision }
@@ -22,6 +23,7 @@ export type Application = {
   id: string; job_id: string; company?: string | null; role?: string | null; location?: string | null; country?: string | null; posting_url?: string | null; application_url?: string | null
   status: string; dry_run: boolean; mode: string; cv_id?: string | null; cv_name?: string | null; prep_source?: string | null
   field_state?: FieldResult[]; browser_run?: BrowserRun; created_at: string; updated_at: string; submitted_at?: string | null
+  deadline?: string | null; status_note?: string | null; email_event_id?: string | null
 }
 export type CV = {
   id: string; name: string; variant: string; version: number; sha256: string; approved: boolean; created_at: string
@@ -39,12 +41,39 @@ export type AutopilotConfig = { enabled: boolean; interval_hours: number; min_sc
 export type AutopilotState = { config: AutopilotConfig; running: string | null; next_run_at: string | null; runs: AutopilotRun[] }
 export type InboxQuestion = { key: string; question: string; classification: string; kind: 'FACT' | 'COUNTRY_FACT' | 'ANSWER' | 'RESUME' | 'COVER_LETTER' | 'CREDENTIAL'; options: string[]; required: boolean; reason: string; country?: string | null; applications: { id: string; job_id: string; company?: string; role?: string }[] }
 export type Suggestion = { id: string; source: string; category: string; fact_key: string; value: unknown; confidence: number; evidence: string; created_at: string }
-export type Draft = { id: string; kind: 'COVER_LETTER' | 'ANSWER' | 'SUMMARY'; job_id?: string | null; question?: string | null; content: string; status: 'DRAFT' | 'APPROVED'; model?: string | null; company?: string | null; role?: string | null; updated_at: string; unverified_skills?: string[] }
+export type Draft = { id: string; kind: 'COVER_LETTER' | 'ANSWER' | 'SUMMARY' | 'FOLLOW_UP' | 'CV_TAILORED'; application_id?: string | null; job_id?: string | null; question?: string | null; content: string; status: 'DRAFT' | 'APPROVED'; model?: string | null; company?: string | null; role?: string | null; updated_at: string; unverified_skills?: string[] }
 export type Inbox = { questions: InboxQuestion[]; suggestions: Suggestion[]; drafts: Draft[] }
 export type Notification = { id: number; created_at: string; kind: string; title: string; body: string; page?: string | null; read: number }
 export type AIStatus = { available: boolean; enabled: boolean; endpoint: string; version?: string; models: string[]; model?: string | null; recommended: { name: string; size: string; note: string }[]; pull: { status: string; model?: string; completed?: number; total?: number; detail?: string } }
-export type JobDetail = Job & { board_questions?: { label: string; required: boolean; field_type: string; options: string[] }[]; drafts: Draft[]; application?: { id: string; status: string } | null }
+export type JobDetail = Job & { board_questions?: { label: string; required: boolean; field_type: string; options: string[] }[]; drafts: Draft[]; application?: { id: string; status: string } | null
+  languages?: { required: string[]; preferred: string[] }; referrals?: Connection[]; duplicates?: { id: string; company: string; role: string; source: string; posting_url?: string }[]; company_notes?: string }
 export type Bootstrap = {
   version?: string; settings: Record<string, unknown>; facts: Fact[]; jobs: Job[]; applications: Application[]; activity: Activity[]; cvs: CV[]; answers: Answer[]
   watchlist: Watch[]; catalog: CatalogEntry[]; inbox: Inbox; autopilot: AutopilotState; notifications: Notification[]
+  update?: UpdateState; strength?: Strength; today?: TodayAction[]; health?: HealthIssue[]; connections?: number; offers?: OffersOverview
 }
+
+// ---- v0.4 ----
+export type UpdateState = {
+  status: 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'error'
+  current: string; latest?: string; notes?: string; published_at?: string; checked_at?: string; release_url?: string; releases_page: string
+  mode: 'installer' | 'portable' | 'dev'; downloaded?: number; total?: number; speed?: number; eta?: number | null; error?: string | null
+  install_at?: string | null; postponed?: boolean; asset?: { name: string; size: number } | null
+}
+export type StrengthItem = { label: string; points: number; done: boolean }
+export type Strength = { percent: number; next: StrengthItem[]; items: StrengthItem[] }
+export type TodayAction = { value: number; kind: 'DEADLINE' | 'SUBMIT' | 'INBOX' | 'PREP' | 'FOLLOW_UP' | 'SUGGESTIONS' | 'DISCOVER'; title: string; detail?: string; page: string; job_id?: string }
+export type HealthIssue = { level: 'bad' | 'warn' | 'info'; title: string; detail: string; page: string }
+export type OfferRow = { id: string; company: string; role: string; location: string; amount: number; currency: string; period: 'HOUR' | 'WEEK' | 'MONTH' | 'YEAR' | 'TOTAL'; hours_per_week: number; duration_months: number; perks?: Record<string, number>; decision_deadline?: string | null; notes: string; monthly: number; monthly_base: number | null; total_base: number | null; perks_base: number; hourly_base: number | null; best: boolean }
+export type OffersOverview = { base: string; rows: OfferRow[]; currencies: string[]; rates_source: string | null; rates_updated?: string | null }
+export type Connection = { id: string; first_name: string; last_name: string; url?: string; company: string; position: string }
+export type CoachTip = { kind: 'SKILL' | 'FACT'; name: string; jobs: number; unlocks: number; examples: string[] }
+export type CompanySummary = { key: string; name: string; jobs: number; best_score: number; applications: number; statuses: Record<string, number>; followed: boolean; platform?: string | null; watch_id?: string | null; connections: number; has_notes: boolean; last_seen: string }
+export type CompanyDetail = CompanySummary & { roles: (Job & { score_json?: string })[]; application_history: { id: string; job_id: string; status: string; submitted_at?: string | null; updated_at: string; role: string }[]; people: Connection[]; notes: string; seasons: number[] }
+export type CalendarEvent = { date: string; kind: 'POSTED' | 'DEADLINE' | 'APPLIED' | 'INTERVIEW'; title: string; job_id?: string }
+export type CalendarData = { events: CalendarEvent[]; seasons: { company: string; months: number[] }[] }
+export type PrepPack = { role: string; company: string; technical: { skill: string; question: string }[]; role_specific: string[]; company_questions: string[]; behavioural: string[]; projects: { name: string; description: string; skills: string[]; overlap: string[]; link?: string }[]; unmatched_skills: string[]; company_notes: string[]; your_notes: string; questions_to_ask: string[]; people: Connection[] }
+export type SearchResult = { parsed: { skills: string[]; countries: string[]; places: string[]; roles: string[]; remote: boolean; keywords: string[] }; ids: string[]; semantic?: boolean }
+export type TailorResult = { id: string; original: string; content: string; model: string; flags: { skills: string[]; numbers: string[] }; company?: string; role?: string; status?: string }
+export type EmailEvent = { id: string; message_id: string; received_at?: string; sender: string; subject: string; kind: string; application_id?: string | null; action: string; company?: string; role?: string; created_at: string }
+export type Backup = { name: string; size: number; created_at: string }

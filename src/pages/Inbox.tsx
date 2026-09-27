@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { Check, FileText, Inbox as InboxIcon, KeyRound, Lightbulb, PenLine, Sparkles, Trash2, Wand2, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Check, Copy, Crosshair, FileText, Inbox as InboxIcon, KeyRound, Lightbulb, List, Mail, PenLine, SkipForward, Sparkles, Trash2, Wand2, X } from 'lucide-react'
 import { api } from '../api'
+import { TailorModal } from '../components/TailorModal'
 import type { Draft, InboxQuestion, Suggestion } from '../types'
 import { Badge, Empty, PageHeading, formatValue, useAction, useNotify, type PageProps } from '../ui'
 
@@ -12,19 +13,37 @@ export function Inbox({ data, refresh, go, openJob }: PageProps) {
   const aiOn = (data.settings.ollama as { provider?: string } | undefined)?.provider === 'OLLAMA'
   const total = box.questions.length + box.suggestions.length + box.drafts.length
   const tabs: [Tab, string, number][] = [['questions', 'Questions', box.questions.length], ['suggestions', 'Profile suggestions', box.suggestions.length], ['drafts', 'Drafts to review', box.drafts.length]]
+  const [focus, setFocus] = useState(false)
+  const [skipped, setSkipped] = useState<string[]>([])
+  // Focus mode: one question at a time, starting with whatever blocks the soonest deadline.
+  const deadlineOf = useMemo(() => {
+    const byApp = new Map(data.applications.map(a => [a.id, a.deadline ? new Date(a.deadline).getTime() : Infinity]))
+    return (q: InboxQuestion) => Math.min(...q.applications.map(a => byApp.get(a.id) ?? Infinity))
+  }, [data.applications])
+  const ordered = useMemo(() => [...box.questions].sort((a, b) => Number(b.required) - Number(a.required) || deadlineOf(a) - deadlineOf(b) || b.applications.length - a.applications.length), [box.questions, deadlineOf])
+  const queue = ordered.filter(q => !skipped.includes(q.key))
+  const current = queue[0] ?? ordered[0]
   return <>
-    <PageHeading eyebrow="Inbox" title={total ? 'A few answers unlock everything' : 'Inbox zero'} text="Answer once — ApplyPilot reuses it on every matching question, in every queued application." />
+    <PageHeading eyebrow="Inbox" title={total ? 'A few answers unlock everything' : 'Inbox zero'} text="Answer once — ApplyPilot reuses it on every matching question, in every queued application.">
+      {tab === 'questions' && box.questions.length > 1 && <button className={`button ${focus ? 'primary' : 'ghost'}`} onClick={() => { setFocus(!focus); setSkipped([]) }}>{focus ? <><List size={15} /> Show all</> : <><Crosshair size={15} /> Focus mode</>}</button>}
+    </PageHeading>
     <div className="tabs">{tabs.map(([key, label, count]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}{count > 0 && <em>{count}</em>}</button>)}</div>
-    {tab === 'questions' && (box.questions.length ? <div className="inbox-list">{box.questions.map(q => <QuestionCard key={q.key} q={q} refresh={refresh} go={go} openJob={openJob} aiOn={aiOn} />)}</div>
+    {tab === 'questions' && focus && current && <div className="focus-mode">
+      <div className="focus-progress"><span><b>{box.questions.length}</b> question{box.questions.length === 1 ? '' : 's'} left · this one unlocks {current.applications.length} application{current.applications.length === 1 ? '' : 's'}</span>
+        {Number.isFinite(deadlineOf(current)) && <span className="warn-text">Blocks an application closing {new Date(deadlineOf(current)).toLocaleDateString()}</span>}
+        <button className="button ghost" onClick={() => setSkipped(queue.length > 1 ? [...skipped, current.key] : [])}><SkipForward size={14} /> Skip</button></div>
+      <QuestionCard key={current.key} q={current} refresh={refresh} go={go} openJob={openJob} aiOn={aiOn} focused />
+    </div>}
+    {tab === 'questions' && !focus && (box.questions.length ? <div className="inbox-list">{ordered.map(q => <QuestionCard key={q.key} q={q} refresh={refresh} go={go} openJob={openJob} aiOn={aiOn} />)}</div>
       : <section className="panel"><Empty icon={InboxIcon} title="No open questions" text="When Autopilot or a form check finds a question ApplyPilot can't answer from verified facts, it lands here." /></section>)}
     {tab === 'suggestions' && (box.suggestions.length ? <div className="inbox-list">{box.suggestions.map(s => <SuggestionCard key={s.id} s={s} refresh={refresh} />)}</div>
       : <section className="panel"><Empty icon={Lightbulb} title="No suggestions" text="Upload a CV and ApplyPilot will read it and suggest profile facts for you to confirm." action={() => go('CV Library')} actionLabel="Open CV Library" /></section>)}
     {tab === 'drafts' && (box.drafts.length ? <div className="inbox-list">{box.drafts.map(d => <DraftCard key={d.id} draft={d} refresh={refresh} />)}</div>
-      : <section className="panel"><Empty icon={PenLine} title="No drafts waiting" text={aiOn ? 'Cover letters and answers drafted by local AI wait here for your edits and approval.' : 'Turn on local AI in Settings to draft cover letters and answers.'} /></section>)}
+      : <section className="panel"><Empty icon={PenLine} title="No drafts waiting" text="Follow-up emails, tailored CVs, cover letters, and AI answers wait here for your review." /></section>)}
   </>
 }
 
-function QuestionCard({ q, refresh, go, openJob, aiOn }: { q: InboxQuestion; refresh: () => Promise<void>; go: PageProps['go']; openJob: (id: string) => void; aiOn: boolean }) {
+function QuestionCard({ q, refresh, go, openJob, aiOn, focused }: { q: InboxQuestion; refresh: () => Promise<void>; go: PageProps['go']; openJob: (id: string) => void; aiOn: boolean; focused?: boolean }) {
   const { run, busy } = useAction(refresh)
   const notify = useNotify()
   const [value, setValue] = useState('')
@@ -42,7 +61,7 @@ function QuestionCard({ q, refresh, go, openJob, aiOn }: { q: InboxQuestion; ref
     if (d) setValue(d.content)
   }
   const apps = q.applications.map(a => a.company).filter(Boolean)
-  return <article className={`inbox-card ${leaving ? 'leaving' : ''}`}>
+  return <article className={`inbox-card ${leaving ? 'leaving' : ''} ${focused ? 'focused' : ''}`}>
     <header><div><Badge tone={q.required ? 'warn' : 'neutral'}>{q.required ? 'Required' : 'Optional'}</Badge>{q.country && <Badge tone="accent">{q.country} only</Badge>}<small>{q.classification.replaceAll('_', ' ').toLowerCase()}</small></div>
       <span className="app-chips">{q.applications.slice(0, 3).map(a => <button key={a.id} onClick={() => openJob(a.job_id)}>{a.company}</button>)}{q.applications.length > 3 && <em>+{q.applications.length - 3}</em>}</span></header>
     <h3>{q.question}</h3>
@@ -90,12 +109,39 @@ function SuggestionCard({ s, refresh }: { s: Suggestion; refresh: () => Promise<
   </article>
 }
 
+function parseEmail(text: string) {
+  const [first, ...rest] = text.split('\n')
+  const subject = first.startsWith('Subject:') ? first.slice(8).trim() : ''
+  return { subject, body: (subject ? rest.join('\n') : text).trim() }
+}
+
 function DraftCard({ draft, refresh }: { draft: Draft; refresh: () => Promise<void> }) {
   const { run, busy } = useAction(refresh)
+  const notify = useNotify()
   const [text, setText] = useState(draft.content)
+  const [review, setReview] = useState(false)
   const placeholders = text.match(/\[[^\]]{3,}\]/g) ?? []
+  const label = { COVER_LETTER: 'Cover letter', ANSWER: 'Answer', SUMMARY: 'Summary', FOLLOW_UP: 'Follow-up email', CV_TAILORED: 'Tailored CV' }[draft.kind]
+  const context = draft.company ? `${draft.role} · ${draft.company}` : 'General'
+  if (draft.kind === 'CV_TAILORED') return <article className="inbox-card draft">
+    <header><div><Badge tone="accent"><FileText size={11} /> {label}</Badge><small>{context}</small></div><button className="icon-button" aria-label="Delete draft" onClick={() => run('delete', () => api.deleteDraft(draft.id), 'Draft deleted')}><Trash2 /></button></header>
+    <h3>Your CV, tailored for {draft.company}</h3><p className="muted small">Review the colour-coded changes, then approve to create the PDF.</p>
+    <div className="answer-actions"><span className="spacer" /><button className="button primary" onClick={() => setReview(true)}>Review changes</button></div>
+    {review && <TailorModal draftId={draft.id} onClose={() => setReview(false)} onDone={refresh} />}
+  </article>
+  if (draft.kind === 'FOLLOW_UP') {
+    const mail = parseEmail(text)
+    return <article className="inbox-card draft">
+      <header><div><Badge tone="accent"><Mail size={11} /> {label}</Badge><small>{context} · nothing is sent automatically</small></div><button className="icon-button" aria-label="Delete draft" onClick={() => run('delete', () => api.deleteDraft(draft.id), 'Draft deleted')}><Trash2 /></button></header>
+      <textarea className="draft-text" value={text} onChange={e => setText(e.target.value)} />
+      <div className="answer-actions"><span className="muted small">Send it from your email to the recruiter or the address on your application confirmation.</span><span className="spacer" />
+        <button className="button ghost" onClick={async () => { await navigator.clipboard.writeText(mail.body); notify('Email copied') }}><Copy size={14} /> Copy</button>
+        <a className="button ghost" href={`mailto:?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(mail.body)}`}><Mail size={14} /> Open in email</a>
+        <button className="button primary" disabled={busy === 'approve'} onClick={() => run('approve', () => api.saveDraft(draft.id, text, true), 'Marked as sent')}><Check size={15} /> I sent it</button></div>
+    </article>
+  }
   return <article className="inbox-card draft">
-    <header><div><Badge tone="accent"><Sparkles size={11} /> {draft.kind === 'COVER_LETTER' ? 'Cover letter' : 'Answer'}</Badge><small>{draft.company ? `${draft.role} · ${draft.company}` : 'General'}{draft.model ? ` · ${draft.model}` : ''}</small></div>
+    <header><div><Badge tone="accent"><Sparkles size={11} /> {label}</Badge><small>{context}{draft.model ? ` · ${draft.model}` : ''}</small></div>
       <button className="icon-button" aria-label="Delete draft" onClick={() => run('delete', () => api.deleteDraft(draft.id), 'Draft deleted')}><Trash2 /></button></header>
     {draft.question && <h3>{draft.question}</h3>}
     <textarea className="draft-text" value={text} onChange={e => setText(e.target.value)} />

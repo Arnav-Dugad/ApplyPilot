@@ -58,6 +58,7 @@ FACT_MAPPING = {
     "EMAIL": ("contact", "email"),
     "PHONE": ("contact", "phone"),
     "ADDRESS": ("contact", "address"),
+    "POSTAL_CODE": ("contact", "postal_code"),
     "LOCATION": ("contact", "location"),
     "LINKEDIN": ("contact", "linkedin"),
     "GITHUB": ("contact", "github"),
@@ -145,7 +146,7 @@ def _fit_to_options(value: Any, options: list[str]) -> tuple[bool, Any]:
 
 def resolve_field(field: DetectedField, facts: list[dict[str, Any]], country: str | None = None, answers: list[dict[str, Any]] | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
     context = context or {}
-    classification = classify_field(field.label, field.name, field.field_type)
+    classification = classify_field(field.label, field.name, field.field_type, field.options)
     field.classification = classification
     match: dict[str, Any] | None = None
     user_answer = False
@@ -178,8 +179,15 @@ def resolve_field(field: DetectedField, facts: list[dict[str, Any]], country: st
                  "reason": "Your approved answer to this question." if exact else f"Your approved answer to a similar question ({int(similarity * 100)}% match)."}
         user_answer = True
 
-    manual_only = classification == "CREDENTIAL" or (classification in {"LEGAL", "DEMOGRAPHIC", "CUSTOM"} and not user_answer)
+    manual_only = classification in {"CREDENTIAL", "DOCUMENT"} or (classification in {"LEGAL", "DEMOGRAPHIC", "CUSTOM", "THIRD_PARTY"} and not user_answer)
     decision = decide_fill(classification, match, manual_only=manual_only, user_answer=user_answer)
+    if decision.action == "FILL" and classification == "GRADUATION_DATE" and isinstance(decision.value, str) and re.fullmatch(r"20\d{2}-\d{2}", decision.value):
+        text = normalize(field.label)
+        year, month = decision.value.split("-")
+        if "month" in text and "year" not in text:  # "Please confirm the month that you will graduate" -> "May"
+            decision = FillDecision("FILL", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][int(month) - 1], decision.source, decision.reason)
+        elif "year" in text and "month" not in text:
+            decision = FillDecision("FILL", year, decision.source, decision.reason)
     if decision.action == "FILL" and field.options:
         fits, option = _fit_to_options(decision.value, field.options)
         decision = FillDecision("FILL", option, decision.source, decision.reason) if fits else FillDecision("PAUSE", reason=f"Your answer “{decision.value}” isn't one of this question's options.")

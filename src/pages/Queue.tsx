@@ -46,6 +46,7 @@ function QueueCard({ app, index, busy, validation, onPrepare, onLive, onValidate
       <Badge tone={statusTone(app.status)}>{STATUS_LABELS[app.status] ?? app.status}</Badge>
       <h3><button className="link-title" onClick={onOpen}>{app.role || 'Role'} · {app.company || 'Company'}</button></h3>
       <p>{app.location || 'Location unknown'} · {app.cv_name ? <>CV: {app.cv_name}</> : <span className="warn-text">No approved CV attached</span>}</p>
+      {app.deadline && <Deadline iso={app.deadline} />}
       {fields.length > 0 && <div className="fill-meter" title={`${filled} of ${fields.length} fields filled`}><i style={{ width: `${progress}%` }} /><span>{filled}/{fields.length} filled{blocking ? ` · ${blocking} need you` : ' · nothing blocking'}</span></div>}
     </div>
     <div className="queue-actions">
@@ -71,4 +72,11 @@ function QueueCard({ app, index, busy, validation, onPrepare, onLive, onValidate
         <ul>{validation.failures.map(f => <li key={f}>{f}</li>)}{validation.warnings.map(w => <li key={w} className="muted">{w}</li>)}</ul></div>
     </div>}
   </div>
+}
+
+function Deadline({ iso }: { iso: string }) {
+  const hours = (new Date(iso).getTime() - Date.now()) / 3_600_000
+  if (Number.isNaN(hours)) return null
+  const label = hours < 0 ? 'Deadline passed' : hours < 24 ? `Closes in ${Math.max(1, Math.round(hours))}h` : `Closes in ${Math.round(hours / 24)} day${Math.round(hours / 24) === 1 ? '' : 's'}`
+  return <span className={`deadline-pill ${hours < 0 ? 'passed' : hours < 24 ? 'urgent' : hours < 72 ? 'soon' : ''}`}>{label}</span>
 }

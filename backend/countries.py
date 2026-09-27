@@ -57,3 +57,18 @@ def country_key(value: str | None) -> str | None:
 
 def same_country(a: str | None, b: str | None) -> bool:
     return a is not None and b is not None and country_key(a) == country_key(b)
+
+
+DISPLAY = {"US": "the United States", "GB": "the United Kingdom", "AE": "the UAE", "NL": "the Netherlands", "CZ": "Czechia", "KR": "South Korea", "PH": "the Philippines"}
+
+
+def country_name(value: str | None) -> str | None:
+    """Readable country name for explanations: 'us' -> 'the United States', 'India' -> 'India'."""
+    key = country_key(value)
+    if not key:
+        return None
+    if key in DISPLAY:
+        return DISPLAY[key]
+    if key in COUNTRY_NAMES:
+        return COUNTRY_NAMES[key][0].title()
+    return str(value).strip()

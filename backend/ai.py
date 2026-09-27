@@ -151,3 +151,25 @@ def draft_answer(config: dict[str, Any], question: str, job: dict[str, Any] | No
     data, model = _chat(config, f"Draft the candidate's answer to this application question in 60-150 words, first person, specific to the job. Use placeholders for anything not in the profile.\n\nQuestion: {question}\n\n<profile>\n{profile_text(facts)}\n</profile>\n\n{context}", schema, temperature=0.5)
     answer = str(data.get("answer", "")).strip()[:3000]
     return {"content": answer, "model": model, "unverified_skills": _unverified_skills(answer, facts)}
+
+
+def tailor_cv(config: dict[str, Any], cv: str, job: dict[str, Any]) -> dict[str, Any]:
+    """Reorders and rephrases the candidate's own CV for one job. Invention checks run on the result afterwards."""
+    schema = {"type": "object", "properties": {"cv": {"type": "string"}}, "required": ["cv"]}
+    prompt = ("Tailor this CV for the job below. You may reorder sections and bullets, tighten wording, and bring the most relevant experience and skills forward. "
+              "You must NOT add any employer, project, skill, number, metric, date, or award that is not already in <cv>. Keep every section heading and keep it one page. "
+              "Return the complete CV as plain text with the same line-based structure (name first, headings in capitals, bullets starting with •).\n\n"
+              f"<cv>\n{cv[:9000]}\n</cv>\n\n{_job_block(job, 4000)}")
+    data, model = _chat(config, prompt, schema, temperature=0.2)
+    return {"content": str(data.get("cv", "")).strip()[:20_000], "model": model}
+
+
+def embed(config: dict[str, Any], texts: list[str]) -> list[list[float]] | None:
+    """Embeddings from a local embedding model (e.g. nomic-embed-text) when one is installed; otherwise None."""
+    info = status(config)
+    model = next((m for m in info.get("models", []) if "embed" in m), None)
+    if not info.get("available") or not model:
+        return None
+    reply = _request(info["endpoint"], "/api/embed", {"model": model, "input": [t[:4000] for t in texts]}, timeout=120)
+    vectors = reply.get("embeddings")
+    return vectors if isinstance(vectors, list) and len(vectors) == len(texts) else None

@@ -28,7 +28,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-CloseApplications=yes
+CloseApplications=force
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
@@ -46,3 +47,15 @@ Name: "{autodesktop}\ApplyPilot"; Filename: "{app}\ApplyPilot.exe"; Tasks: deskt
 
 [Run]
 Filename: "{app}\ApplyPilot.exe"; Description: "Launch ApplyPilot"; Flags: nowait postinstall skipifsilent
+; Automatic updates run the installer silently with /RELAUNCH=1 so ApplyPilot reopens on the new version.
+Filename: "{app}\ApplyPilot.exe"; Flags: nowait; Check: ShouldRelaunch
+
+[UninstallRun]
+; Remove the "start with Windows" entry if the user had enabled it.
+Filename: "{sys}\reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v ApplyPilot /f"; Flags: runhidden; RunOnceId: "RemoveAutostart"
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;

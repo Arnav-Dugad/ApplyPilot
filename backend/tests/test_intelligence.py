@@ -125,6 +125,38 @@ class ResolverTests(unittest.TestCase):
         self.assertEqual((with_cv["action"], with_cv["upload"]), ("FILL", True))
 
 
+class ClassifierAuditTests(unittest.TestCase):
+    """Real application questions that were once filed under the wrong fact."""
+
+    CASES = [
+        ("After the OPT, are you eligible for a 24-month OPT extension based upon a degree from a qualifying U.S. institution?", ["Yes", "No", "NA"], "UNKNOWN"),
+        ("What Duolingo sponsored conferences have you attended and/or organizations are you a part of?", ["Rewriting the Code"], "UNKNOWN"),
+        ("Will you now or in the future require sponsorship for work authorization?", ["Yes", "No"], "SPONSORSHIP"),
+        ("[Relocation] Samsara will not provide relocation assistance for this role. Do you require relocation assistance?", ["Yes", "No"], "RELOCATION_ASSISTANCE"),
+        ("Are you available to relocate to Boston for this position?", ["Yes", "No"], "RELOCATION"),
+        ("Advisor email", [], "THIRD_PARTY"),
+        ("Alternate Email", [], "THIRD_PARTY"),
+        ("Email", [], "EMAIL"),
+        ("Zip / postal code", [], "POSTAL_CODE"),
+        ("Undergraduate GPA", [], "GPA"),
+        ("Please upload a copy of your most up-to-date college transcripts.", [], "DOCUMENT"),
+        ("Please share the full name of your major/final year specialization(s) as it would appear on your diploma", [], "DOCUMENT"),
+        ("Full Legal Name", [], "NAME"),
+        ("Preferred First Name", [], "FIRST_NAME"),
+        ("Location Preference", ["Mountain View, CA", "San Francisco, CA"], "UNKNOWN"),
+        ("Location (City)", [], "LOCATION"),
+        ("In this role you will be interacting with clients via email. It will be important to showcase excellent writing.", [], "UNKNOWN"),
+        ("If you are currently enrolled in a university or program, what is your expected graduation date?", ["Spring 2027", "Fall 2027"], "GRADUATION_DATE"),
+        ("What best describes your interest in pursuing internal audit after graduation?", ["Very interested"], "CUSTOM"),
+        ("Current University", [], "EDUCATION"),
+    ]
+
+    def test_real_questions(self):
+        from backend.safety import classify_field
+        wrong = [(label, classify_field(label, options=options), expected) for label, options, expected in self.CASES if classify_field(label, options=options) != expected]
+        self.assertEqual(wrong, [])
+
+
 class CVExtractionTests(unittest.TestCase):
     def test_extracts_suggestions_with_evidence(self):
         text = "ARNAV DUGAD\nBengaluru | +91 98765 43210 | arnav@example.com\nlinkedin.com/in/arnav | github.com/arnav\n\nManipal Institute of Technology    2023 - 2027\nB.Tech in Computer Science and Engineering\nExpected graduation: May 2027\nSkills: Python, React, PostgreSQL"

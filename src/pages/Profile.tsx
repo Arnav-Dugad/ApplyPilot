@@ -3,6 +3,8 @@ import { Check, Globe2, Pencil, Plus, ShieldCheck, Trash2, X } from 'lucide-reac
 import { api } from '../api'
 import type { Fact, FactStatus } from '../types'
 import { Badge, PageHeading, formatValue, useAction, type PageProps } from '../ui'
+import { LanguagesPanel, ProjectsPanel } from '../components/ProfileExtras'
+import { ScoreRing } from '../motion'
 
 // Facts the form filler knows how to use, in the order they usually appear on applications.
 const AUTOFILL: [string, string, string][] = [
@@ -12,6 +14,7 @@ const AUTOFILL: [string, string, string][] = [
 ]
 const LIST_KEYS = new Set(['verified_skills', 'locations'])
 const COUNTRY_SCOPED = new Set(['work_authorization', 'sponsorship'])
+const OWN_PANELS = new Set(['work_authorization', 'sponsorship', 'languages', 'projects'])
 const REGIONS = new Set(['europe', 'remote', 'anywhere', 'gcc', 'middle east', 'asia', 'emea', 'apac', 'worldwide'])
 const CATEGORIES = ['personal', 'contact', 'education', 'skills', 'preferences', 'other']
 
@@ -27,7 +30,7 @@ export function Profile({ data, refresh }: PageProps) {
   const [newCountry, setNewCountry] = useState('')
   const [extraCountries, setExtraCountries] = useState<string[]>([])
 
-  const general = data.facts.filter(f => !COUNTRY_SCOPED.has(f.category))
+  const general = data.facts.filter(f => !OWN_PANELS.has(f.category))
   const groups = useMemo(() => general.reduce<Record<string, Fact[]>>((all, fact) => { (all[fact.category] ||= []).push(fact); return all }, {}), [general])
   const has = (category: string, key: string) => data.facts.some(f => f.category === category && f.fact_key === key && f.status === 'VERIFIED')
   const ready = AUTOFILL.filter(([c, k]) => has(c, k)).length
@@ -63,6 +66,7 @@ export function Profile({ data, refresh }: PageProps) {
 
   return <>
     <PageHeading eyebrow="Truth Layer" title="Verified profile" text="These are the only facts automation is allowed to use. Editing a fact expires anything that depended on it.">
+      {data.strength && <div className="heading-strength" title={data.strength.next.map(i => `+${i.points}% ${i.label}`).join(' · ')}><ScoreRing score={data.strength.percent} size={46} stroke={4} /><span>Profile<br />strength</span></div>}
       <Badge tone="good"><ShieldCheck size={13} /> STRICT</Badge>
       <button className="button primary" onClick={() => setAdding({ category: 'contact', fact_key: '', value: '' })}><Plus size={16} /> Add fact</button>
     </PageHeading>
@@ -92,6 +96,8 @@ export function Profile({ data, refresh }: PageProps) {
         <div className="country-row add"><input value={newCountry} onChange={e => setNewCountry(e.target.value)} placeholder="Add a country…" onKeyDown={e => { if (e.key === 'Enter' && newCountry.trim()) { setExtraCountries([...extraCountries, newCountry.trim()]); setNewCountry('') } }} /><button className="button subtle" disabled={!newCountry.trim()} onClick={() => { setExtraCountries([...extraCountries, newCountry.trim()]); setNewCountry('') }}><Plus size={14} /> Add</button></div>
       </div>
     </section>
+
+    <div className="profile-duo"><LanguagesPanel facts={data.facts} refresh={refresh} /><ProjectsPanel facts={data.facts} refresh={refresh} /></div>
 
     <div className="profile-grid">{Object.entries(groups).map(([category, facts]) => <section className="panel" key={category}><div className="panel-head"><h2>{category.replaceAll('_', ' ')}</h2><Badge>{facts.length}</Badge></div>
       {facts.map(f => editing === f.id ? <div className="fact editing" key={f.id}>

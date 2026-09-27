@@ -1,4 +1,4 @@
-import { ExternalLink, Gauge } from 'lucide-react'
+import { ExternalLink, Gauge, GraduationCap, HandCoins, Mail, Undo2 } from 'lucide-react'
 import { api } from '../api'
 import { burstConfetti } from '../motion'
 import type { Application } from '../types'
@@ -28,6 +28,9 @@ export function Tracker({ data, refresh, go, openJob }: PageProps) {
           <button className="link-title" onClick={() => openJob(app.job_id)}><b>{app.role || 'Role'}</b></button>
           <span>{app.company || 'Company'}{app.location ? ` · ${app.location}` : ''}</span>
           <small>{app.submitted_at ? `Applied ${formatDate(app.submitted_at)}` : `Updated ${formatDate(app.updated_at)}`}</small>
+          {app.status_note && <div className="email-note"><Mail size={12} /><span>{app.status_note}</span>{app.email_event_id && <button onClick={() => run(`undo-${app.id}`, () => api.undoEmail(app.email_event_id!), 'Moved back')} title="Undo this automatic move"><Undo2 size={12} /> Undo</button>}</div>}
+          {app.status === 'INTERVIEWING' && <button className="card-cta" onClick={() => openJob(app.job_id)}><GraduationCap size={13} /> Interview prep</button>}
+          {app.status === 'OFFER' && !(data.offers?.rows ?? []).some(o => o.company.toLowerCase() === (app.company ?? '').toLowerCase()) && <button className="card-cta gold" onClick={() => go('Offers')}><HandCoins size={13} /> Add offer details</button>}
           <footer>
             <select value={MOVES.includes(app.status) ? app.status : ''} onChange={e => move(app, e.target.value)} aria-label="Move application">
               {!MOVES.includes(app.status) && <option value="">{STATUS_LABELS[app.status] ?? app.status}</option>}

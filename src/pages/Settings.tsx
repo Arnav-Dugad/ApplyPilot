@@ -3,6 +3,7 @@ import { Bot, Cpu, Database, Download, Info, Moon, ShieldCheck, Sun } from 'luci
 import { api } from '../api'
 import type { AIStatus } from '../types'
 import { Badge, PageHeading, useAction, type PageProps } from '../ui'
+import { BackupResetSection, DesktopSection, EmailSection, UpdatesSection } from '../components/SettingsSections'
 
 export function SettingsPage({ data, refresh, dark, setDark }: PageProps & { dark: boolean; setDark: (dark: boolean) => void }) {
   const { run } = useAction(refresh)
@@ -10,16 +11,20 @@ export function SettingsPage({ data, refresh, dark, setDark }: PageProps & { dar
   useEffect(() => { api.health().then(h => setDatabase(h.database)).catch(() => undefined) }, [])
   const toggle = (key: string, value: boolean, label: string) => run(key, () => api.settings({ [key]: value }), `${label} ${value ? 'on' : 'off'}`)
   return <>
-    <PageHeading eyebrow="Control center" title="Safety, AI & preferences" text="Conservative defaults stay in place until you explicitly change them." />
+    <PageHeading eyebrow="Control center" title="Safety, AI & preferences" text="Updates, safety, AI, notifications, email, and your data." />
+    <UpdatesSection data={data} refresh={refresh} />
     <LocalAI refresh={refresh} provider={(data.settings.ollama as { provider?: string } | undefined)?.provider} />
+    <DesktopSection data={data} refresh={refresh} />
+    <EmailSection data={data} refresh={refresh} />
     <section className="panel settings-list">
       <SettingRow title="Strict Accuracy Mode" text="Unknown personal answers always pause." active={Boolean(data.settings.strict_accuracy_mode)} onChange={v => toggle('strict_accuracy_mode', v, 'Strict Accuracy Mode')} note="Recommended" />
       <SettingRow title="Dry Run" text="Fill and validate, but never submit." active={Boolean(data.settings.dry_run)} onChange={v => toggle('dry_run', v, 'Dry Run')} />
       <SettingRow title="Actual submissions" text="ApplyPilot never presses submit in this version; this switch only changes what validation reports." active={Boolean(data.settings.actual_submission_enabled)} onChange={v => toggle('actual_submission_enabled', v, 'Actual submissions')} />
       <div className="setting-row"><div className="setting-icon">{dark ? <Moon /> : <Sun />}</div><div><b>Appearance</b><span>{dark ? 'Dark' : 'Light'} theme</span></div><span /><button className={`toggle ${dark ? 'on' : ''}`} onClick={() => setDark(!dark)} aria-label="Toggle dark theme"><i /></button></div>
     </section>
+    <BackupResetSection refresh={refresh} />
     <section className="panel settings-list about"><div className="setting-row"><div className="setting-icon"><Database /></div><div><b>Your data</b><span className="mono">{database || 'Loading…'}</span></div></div>
-      <div className="setting-row"><div className="setting-icon"><Info /></div><div><b>ApplyPilot {data.version ?? ''}</b><span>Local-first. No account, cloud service, or API key. <a href="https://github.com/Arnav-Dugad/ApplyPilot/releases" target="_blank" rel="noreferrer">Check for updates</a></span></div></div>
+      <div className="setting-row"><div className="setting-icon"><Info /></div><div><b>ApplyPilot {data.version ?? ''}</b><span>Local-first. No account, cloud service, or API key. <a href="https://github.com/Arnav-Dugad/ApplyPilot/releases" target="_blank" rel="noreferrer">Release history</a></span></div></div>
     </section>
   </>
 }

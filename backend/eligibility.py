@@ -4,7 +4,8 @@ import json
 import re
 from typing import Any
 
-from .countries import same_country
+from .countries import country_name, same_country
+from .languages import detect as detect_languages, normalize as normalize_language
 from .skills import canonical, find_skills, related_credit
 
 PREFERRED_MARKERS = ("preferred", "nice to have", "nice-to-have", "bonus", "a plus", "is a plus", "desirable", "ideally")
@@ -53,7 +54,11 @@ def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]
     work_text = job.get("work_authorization")
     if work_text or country:
         auth = country_fact(verified, "work_authorization", "authorized", country)
-        checks.append({"name": "Work authorization", "result": "PASS" if auth is True else "FAIL" if auth is False else "UNKNOWN", "explanation": f"Country-specific answer for {country or 'this location'} only."})
+        place = country_name(country) or "this location"
+        explanation = (f"You're verified as authorized to work in {place}." if auth is True else
+                       f"Your verified answer: not authorized to work in {place}." if auth is False else
+                       f"Your work authorization for {place} isn't verified yet — answers never carry over from other countries.")
+        checks.append({"name": "Work authorization", "result": "PASS" if auth is True else "FAIL" if auth is False else "UNKNOWN", "explanation": explanation})
     sponsorship_text = job.get("sponsorship_information")
     if sponsorship_text:
         needs = country_fact(verified, "sponsorship", "requires_sponsorship", country)
@@ -64,8 +69,20 @@ def evaluate(job: dict[str, Any], facts: list[dict[str, Any]]) -> dict[str, Any]
         elif needs is True:
             sponsorship, why = "UNKNOWN", "Sponsorship wording is ambiguous; review it before applying."
         else:
-            sponsorship, why = "UNKNOWN", f"Your sponsorship need for {country or 'this location'} is not verified."
+            sponsorship, why = "UNKNOWN", f"Your sponsorship need for {country_name(country) or 'this location'} isn't verified yet."
         checks.append({"name": "Sponsorship", "result": sponsorship, "explanation": why})
+    wanted = [normalize_language(n) for n in detect_languages(job.get("description") or "")["required"]]
+    if wanted:
+        spoken_fact = next((f for f in verified if f["category"] == "languages" and f["fact_key"] == "spoken"), None)
+        spoken = {normalize_language(str(x)) for x in (_value(spoken_fact) or [])} if spoken_fact else None
+        if spoken is None:
+            checks.append({"name": "Languages", "result": "UNKNOWN", "explanation": f"Requires {', '.join(wanted)}. Add the languages you speak in your profile."})
+        elif all(w in spoken for w in wanted):
+            checks.append({"name": "Languages", "result": "PASS", "explanation": f"You speak {', '.join(wanted)}."})
+        elif len(wanted) == 1:
+            checks.append({"name": "Languages", "result": "FAIL", "explanation": f"Requires {wanted[0]}, which isn't in your verified languages."})
+        else:
+            checks.append({"name": "Languages", "result": "UNKNOWN", "explanation": f"Mentions {', '.join(wanted)} — check whether all or any one is required."})
     checks.append({"name": "Required skills", "result": "PASS" if not missing else "PARTIAL", "explanation": f"{len(strong)} matched; {len(missing)} not present in verified profile."})
     definite_fail = any(c["result"] == "FAIL" for c in checks)
     unknown = any(c["result"] == "UNKNOWN" for c in checks)

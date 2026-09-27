@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_log(timestamp DESC);
 -- v0.3: Autopilot, discovery, suggestions, drafts, notifications
 CREATE TABLE IF NOT EXISTS watchlist (
   id TEXT PRIMARY KEY,
-  platform TEXT NOT NULL CHECK(platform IN ('GREENHOUSE','LEVER','ASHBY','SMARTRECRUITERS')),
+  platform TEXT NOT NULL,
   slug TEXT NOT NULL,
   company TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -198,8 +198,9 @@ CREATE TABLE IF NOT EXISTS suggestions (
 
 CREATE TABLE IF NOT EXISTS drafts (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK(kind IN ('COVER_LETTER','ANSWER','SUMMARY')),
+  kind TEXT NOT NULL,
   job_id TEXT,
+  application_id TEXT,
   question TEXT,
   content TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN ('DRAFT','APPROVED')),
@@ -221,3 +222,65 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read, id DESC);
 CREATE INDEX IF NOT EXISTS idx_drafts_job ON drafts(job_id, kind);
+
+-- v0.4: learning, referrals, companies, offers, email sync
+CREATE TABLE IF NOT EXISTS job_feedback (
+  job_id TEXT PRIMARY KEY,
+  vote INTEGER NOT NULL CHECK(vote IN (-1, 1)),
+  source TEXT NOT NULL DEFAULT 'USER',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS connections (
+  id TEXT PRIMARY KEY,
+  first_name TEXT NOT NULL DEFAULT '',
+  last_name TEXT NOT NULL DEFAULT '',
+  url TEXT,
+  email TEXT,
+  company TEXT NOT NULL DEFAULT '',
+  company_key TEXT NOT NULL DEFAULT '',
+  position TEXT NOT NULL DEFAULT '',
+  connected_on TEXT,
+  imported_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_notes (
+  company_key TEXT PRIMARY KEY,
+  company TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS offers (
+  id TEXT PRIMARY KEY,
+  application_id TEXT,
+  company TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '',
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL,
+  period TEXT NOT NULL CHECK(period IN ('HOUR','WEEK','MONTH','YEAR','TOTAL')),
+  hours_per_week REAL NOT NULL DEFAULT 40,
+  duration_months REAL NOT NULL DEFAULT 3,
+  perks_json TEXT NOT NULL DEFAULT '{}',
+  decision_deadline TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_events (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL UNIQUE,
+  received_at TEXT,
+  sender TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL,
+  application_id TEXT,
+  action TEXT NOT NULL DEFAULT 'NONE',
+  previous_status TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_connections_company ON connections(company_key);

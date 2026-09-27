@@ -10,18 +10,18 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, ai, service
+from . import __version__, ai, maintenance, service, shell, updater
 from .automation import pre_submission_validate
-from .database import AUTOPILOT_DEFAULTS, ROOT, now
+from .database import AUTOPILOT_DEFAULTS, ROOT, SETTING_DEFAULTS, data_dir, now
 from .job_parser import import_url
-from .service import AUTOPILOT, DB, Conflict, NotFound, decoded, save_job
+from .service import AUTOPILOT, DB, Conflict, NotFound, save_job
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 DEV_ORIGIN = "http://localhost:1420"
 TRACKER_STATUSES = {"QUEUED", "NEEDS_INFO", "WAITING_FOR_USER", "READY_FOR_REVIEW", "APPLIED", "INTERVIEWING", "OFFER", "REJECTED", "WITHDRAWN"}
-DELETABLE = {"profile/facts": "profile_facts", "answers": "answer_vault", "jobs": "jobs", "applications": "applications", "watchlist": "watchlist", "drafts": "drafts"}
+DELETABLE = {"profile/facts": "profile_facts", "answers": "answer_vault", "jobs": "jobs", "applications": "applications", "watchlist": "watchlist", "drafts": "drafts", "offers": "offers"}
 ANSWER_TYPES = {"EXACT", "COUNTRY_SPECIFIC", "COMPANY_SPECIFIC", "ROLE_SPECIFIC", "GENERATED_WITH_APPROVAL", "MANUAL_ONLY"}
 # The Windows registry can map .js to text/plain, which browsers refuse to execute as a module.
 for _type, _ext in (("text/javascript", ".js"), ("text/css", ".css"), ("image/svg+xml", ".svg"), ("image/x-icon", ".ico"), ("image/png", ".png"), ("font/woff2", ".woff2")):
@@ -59,10 +59,21 @@ def _save_answer(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _settings(body: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot"}
+    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot", "desktop", "updates", "base_currency"}
     for key, value in body.items():
         if key not in allowed:
             continue
+        if key == "desktop":
+            current = {**SETTING_DEFAULTS["desktop"], **(DB.setting("desktop") or {})}
+            value = {**current, **{k: bool(v) for k, v in dict(value).items() if k in current}}
+            if value["start_with_windows"] != current["start_with_windows"]:
+                shell.set_start_with_windows(value["start_with_windows"])
+        if key == "updates":
+            value = {**SETTING_DEFAULTS["updates"], **(DB.setting("updates") or {}), **{k: bool(v) for k, v in dict(value).items() if k in SETTING_DEFAULTS["updates"]}}
+        if key == "base_currency":
+            from .offers import CURRENCIES
+            if value not in CURRENCIES:
+                raise ValueError("Unsupported currency")
         if key == "autopilot":
             current = {**AUTOPILOT_DEFAULTS, **(DB.setting("autopilot") or {})}
             value = {**current, **{k: v for k, v in dict(value).items() if k in AUTOPILOT_DEFAULTS and type(v) is type(AUTOPILOT_DEFAULTS[k])}}
@@ -126,7 +137,8 @@ def _live_fill(app_id: str) -> dict[str, Any]:
     def run() -> None:
         _live_runs.add(app_id)
         try:
-            plan = browser_runner.live_fill(url, service.facts(), app.get("country"), service.answers(), service.application_context(app), on_event=emit)
+            plan = browser_runner.live_fill(url, service.facts(), app.get("country"), service.answers(), service.application_context(app), on_event=emit,
+                                            dock=(lambda: shell.call("dock")) if shell.hooks.get("dock") else None)
             if plan.get("fields"):
                 status = plan["status"] if app["status"] in service.ACTIVE_STATUSES else app["status"]
                 DB.execute("UPDATE applications SET status=?,field_state_json=?,prep_source='LIVE_PAGE' WHERE id=?", (status, json.dumps(plan["fields"]), app_id))
@@ -164,10 +176,20 @@ GET_ROUTES: list[tuple[str, Callable[..., Any]]] = [
     (r"/api/jobs/([^/]+)", lambda _b, job_id: service.job_detail(job_id)),
     (r"/api/autopilot", lambda _b: service.autopilot_state()),
     (r"/api/ai/status", lambda _b: ai.status(service.ai_config())),
+    (r"/api/insights", lambda _b: service.insights_overview()),
+    (r"/api/search", lambda b: service.search_jobs(str(b.get("q") or ""))),
+    (r"/api/companies", lambda _b: service.companies()),
+    (r"/api/companies/([^/]+)", lambda _b, key: service.company_detail(unquote(key))),
+    (r"/api/calendar", lambda _b: service.calendar()),
+    (r"/api/jobs/([^/]+)/prep", lambda _b, i: service.prep_pack(i)),
+    (r"/api/drafts/([^/]+)/diff", lambda _b, i: service.tailored_diff(i)),
+    (r"/api/email/events", lambda _b: service.email_events()),
+    (r"/api/backups", lambda _b: maintenance.list_backups(DB)),
+    (r"/api/update", lambda _b: updater.state()),
 ]
 
 POST_ROUTES: list[tuple[str, Callable[..., Any], int]] = [
-    (r"/api/profile/facts", lambda b: decoded([DB.upsert_fact(b)])[0] | {"reprepared": service.reprepare_active()}, 200),
+    (r"/api/profile/facts", lambda b: service.save_fact(b), 200),
     (r"/api/answers", _save_answer, 201),
     (r"/api/answers/([^/]+)/approve", lambda _b, i: (DB.execute("UPDATE answer_vault SET status='VERIFIED',approved_at=?,updated_at=? WHERE id=?", (now(), now(), service.one("SELECT id FROM answer_vault WHERE id=?", (i,))["id"])), service.reprepare_active(), {"id": i, "status": "VERIFIED"})[-1], 200),
     (r"/api/settings", _settings, 200),
@@ -194,7 +216,57 @@ POST_ROUTES: list[tuple[str, Callable[..., Any], int]] = [
     (r"/api/autopilot/run", lambda _b: {"run_id": AUTOPILOT.start("MANUAL")}, 202),
     (r"/api/notifications/read", lambda _b: (DB.execute("UPDATE notifications SET read=1 WHERE read=0"), {"ok": True})[-1], 200),
     (r"/api/ai/pull", lambda b: (ai.pull_model(service.ai_config(), str(b.get("model") or "")), {"ok": True})[-1], 202),
+    (r"/api/jobs/([^/]+)/vote", lambda b, i: service.vote_job(i, int(b.get("vote", 0))), 200),
+    (r"/api/jobs/([^/]+)/tailor", lambda b, i: service.tailor_cv(i, b.get("ai") is True), 201),
+    (r"/api/jobs/([^/]+)/referral", lambda b, i: service.referral_message(i, str(b.get("connection_id") or "")), 200),
+    (r"/api/companies/([^/]+)/notes", lambda b, key: service.save_company_notes(unquote(key), str(b.get("name") or unquote(key)), str(b.get("notes") or "")), 200),
+    (r"/api/connections/import", lambda b: service.import_connections(str(b.get("csv") or "")), 201),
+    (r"/api/connections/clear", lambda _b: (DB.execute("DELETE FROM connections"), {"ok": True})[-1], 200),
+    (r"/api/offers", lambda b: service.save_offer(b), 201),
+    (r"/api/email/settings", lambda b: service.save_email_settings(b), 200),
+    (r"/api/email/sync", lambda _b: service.sync_email(), 200),
+    (r"/api/email/events/([^/]+)/undo", lambda _b, i: service.undo_email_move(i), 200),
+    (r"/api/backups", lambda b: maintenance.create_backup(DB, str(b.get("label") or "manual")), 201),
+    (r"/api/backups/restore", lambda b: _restore(str(b.get("name") or "")), 200),
+    (r"/api/backups/open", lambda _b: (maintenance.open_folder(maintenance.backups_dir(DB)), {"ok": True})[-1], 200),
+    (r"/api/reset", lambda b: _reset(b), 200),
+    (r"/api/update/check", lambda _b: updater.check(), 200),
+    (r"/api/update/download", lambda _b: updater.download(), 202),
+    (r"/api/update/install", lambda _b: updater.install(relaunch=True), 202),
+    (r"/api/update/postpone", lambda _b: updater.postpone(), 200),
+    (r"/api/app/show", lambda _b: (shell.call("show"), {"ok": True})[-1], 200),
 ]
+
+
+def _busy_guard() -> None:
+    if AUTOPILOT.running_id or _live_runs:
+        raise Conflict("Wait for Autopilot or live fill to finish first")
+
+
+def _reset(body: dict[str, Any]) -> dict[str, Any]:
+    """Erases everything after an explicit typed confirmation. A safety backup is taken unless the user opts out."""
+    if body.get("confirm") != "RESET":
+        raise ValueError("Type RESET to confirm")
+    _busy_guard()
+    from .browser_runner import edge_profile_in_use
+
+    # The app window's own storage is live and is never deleted (the UI clears its preferences itself).
+    # ApplyPilot's Edge profile is only cleared when that Edge window is closed, so it can't be corrupted.
+    browser_open = edge_profile_in_use()
+    folders = (data_dir() / "receipts", data_dir() / "logs") + (() if browser_open else (data_dir() / "browser",))
+    result = maintenance.reset(DB, backup_first=body.get("backup", True) is not False, extra_dirs=folders)
+    shell.set_start_with_windows(False)
+    service._backfilled = False
+    DB.log("WORKSPACE_RESET", details={"backup": (result.get("backup") or {}).get("name")})
+    return {**result, "browser_data_kept": browser_open}
+
+
+def _restore(name: str) -> dict[str, Any]:
+    _busy_guard()
+    result = maintenance.restore(DB, name)
+    service._backfilled = False
+    DB.log("WORKSPACE_RESTORED", details={"backup": name})
+    return result
 
 
 def _manual_job(body: dict[str, Any]) -> dict[str, Any]:
@@ -298,10 +370,11 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET":
                 if path == "/health":
                     return self._json(200, {"status": "ok", "version": __version__, "database": str(DB.path), "strict": DB.setting("strict_accuracy_mode")})
-                return self._dispatch(GET_ROUTES, path, {})
+                query = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                return self._dispatch(GET_ROUTES, path, query)
             body = self._body()
             if method == "DELETE":
-                match = re.fullmatch(r"/api/(profile/facts|answers|jobs|applications|watchlist|drafts)/([^/]+)", path)
+                match = re.fullmatch(r"/api/(profile/facts|answers|jobs|applications|watchlist|drafts|offers)/([^/]+)", path)
                 return self._json(200, _delete(*match.groups())) if match else self._json(404, {"error": "Not found"})
             return self._dispatch(POST_ROUTES, path, body)
         except Conflict as exc:
