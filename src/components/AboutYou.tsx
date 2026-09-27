@@ -53,7 +53,7 @@ function Chips({ items, onRemove, onAdd, placeholder, suggestions = [], list }: 
   const add = (v: string) => { const clean = v.trim(); if (clean && !items.some(i => i.toLowerCase() === clean.toLowerCase())) onAdd(clean); setText('') }
   return <div className="lang-chips">{items.map(i => <span key={i} className="chip done">{i}<button onClick={() => onRemove(i)} aria-label={`Remove ${i}`}><X size={11} /></button></span>)}
     {suggestions.filter(s => !items.some(i => i.toLowerCase() === s.toLowerCase())).slice(0, 8).map(s => <button key={s} className="chip" onClick={() => add(s)}><Plus size={11} />{s}</button>)}
-    <span className="chip-input"><input value={text} list={list} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && add(text)} onBlur={() => text.trim() && add(text)} placeholder={placeholder} /></span></div>
+    <span className="chip-input"><input value={text} list={list} onChange={e => { const v = e.target.value; setText(v); if (list && COUNTRIES.some(c => c === v)) add(v) }} onKeyDown={e => e.key === 'Enter' && add(text)} placeholder={placeholder} /></span></div>
 }
 
 const COUNTRIES = ['India', 'United States', 'United Kingdom', 'Germany', 'France', 'Netherlands', 'Ireland', 'Canada', 'Australia', 'Singapore', 'United Arab Emirates', 'Saudi Arabia', 'Qatar', 'Bahrain', 'Kuwait', 'Oman', 'Switzerland', 'Sweden', 'Norway', 'Denmark', 'Finland', 'Spain', 'Italy', 'Portugal', 'Poland', 'Belgium', 'Austria', 'Japan', 'South Korea', 'China', 'Hong Kong', 'Nepal', 'Sri Lanka', 'Bangladesh', 'Pakistan', 'New Zealand', 'Israel', 'Brazil', 'Mexico']

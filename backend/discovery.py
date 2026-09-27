@@ -39,7 +39,17 @@ CATALOG: list[dict[str, str]] = [
     {"platform": "SMARTRECRUITERS", "slug": s, "company": c} for s, c in [("BoschGroup", "Bosch"), ("Continental", "Continental"), ("Wise", "Wise"), ("ServiceNow", "ServiceNow"), ("Canva", "Canva")]
 ] + [
     {"platform": "WORKDAY", "slug": s, "company": c} for s, c in [("nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", "NVIDIA"), ("intel.wd1.myworkdayjobs.com/External", "Intel"),
-                                                                 ("adobe.wd5.myworkdayjobs.com/external_experienced", "Adobe"), ("salesforce.wd12.myworkdayjobs.com/External_Career_Site", "Salesforce")]
+                                                                 ("adobe.wd5.myworkdayjobs.com/external_experienced", "Adobe"), ("salesforce.wd12.myworkdayjobs.com/External_Career_Site", "Salesforce"),
+                                                                 ("analogdevices.wd1.myworkdayjobs.com/External", "Analog Devices"), ("cadence.wd1.myworkdayjobs.com/External_Careers", "Cadence"),
+                                                                 ("micron.wd1.myworkdayjobs.com/External", "Micron"), ("nxp.wd3.myworkdayjobs.com/careers", "NXP")]
+] + [
+    # Companies with engineering teams in India (boards verified 2026-09-27). Shown first to people who'd work in India.
+    {"platform": p, "slug": s, "company": c, "region": "India"} for p, s, c in [
+        ("GREENHOUSE", "razorpaysoftwareprivatelimited", "Razorpay"), ("GREENHOUSE", "groww", "Groww"), ("GREENHOUSE", "rubrik", "Rubrik"), ("GREENHOUSE", "inmobi", "InMobi"),
+        ("GREENHOUSE", "druva", "Druva"), ("GREENHOUSE", "hackerrank", "HackerRank"), ("GREENHOUSE", "observeai", "Observe.AI"), ("LEVER", "cred", "CRED"), ("LEVER", "zeta", "Zeta"),
+        ("LEVER", "meesho", "Meesho"), ("LEVER", "paytm", "Paytm"), ("LEVER", "fampay", "FamPay"), ("ASHBY", "atlan", "Atlan"), ("ASHBY", "sarvam", "Sarvam AI"),
+        ("SMARTRECRUITERS", "Freshworks", "Freshworks"), ("SMARTRECRUITERS", "Swiggy", "Swiggy"),
+    ]
 ]
 
 _BOARD_URLS = [
@@ -239,20 +249,28 @@ def _workday_posted(text: str | None, start: str | None) -> str | None:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
-def _workday(slug: str, internships_only: bool) -> tuple[str, list[dict[str, Any]], int]:
+def _workday(slug: str, internships_only: bool, places: list[str] | None = None) -> tuple[str, list[dict[str, Any]], int]:
     host, site = slug.split("/", 1)
     tenant = host.split(".")[0]
     base = f"https://{host}/wday/cxs/{tenant}/{site}"
     postings: list[dict[str, Any]] = []
+    seen: set[str] = set()
     total = 0
-    for offset in range(0, 100, 20):
-        page = _get(f"{base}/jobs", {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": "intern" if internships_only else ""})
-        total = total or int(page.get("total") or 0)
-        batch = page.get("jobPostings") or []
-        postings += batch
-        if len(batch) < 20:
-            break
-    wanted = [p for p in postings if not internships_only or is_internship(p.get("title", ""))][:40]
+    # Big companies list hundreds of internships; the ones in the countries you'd work in may be far down the list,
+    # so each of your countries gets its own search ("intern India") as well.
+    searches = [f"intern {place}" for place in (places or [])[:3]] + ["intern"] if internships_only else [""]
+    for text in searches:
+        for offset in range(0, 100, 20):
+            page = _get(f"{base}/jobs", {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": text})
+            total = total or int(page.get("total") or 0)
+            batch = page.get("jobPostings") or []
+            for post in batch:
+                if post.get("externalPath") and post["externalPath"] not in seen:
+                    seen.add(post["externalPath"])
+                    postings.append(post)
+            if len(batch) < 20 or offset >= (40 if text != "intern" else 80):
+                break
+    wanted = [p for p in postings if not internships_only or is_internship(p.get("title", ""))][:60]
 
     def detail(post: dict[str, Any]) -> dict[str, Any]:
         info = _get(f"{base}{post['externalPath']}").get("jobPostingInfo") or {}
@@ -342,11 +360,11 @@ FETCHERS = {"GREENHOUSE": _greenhouse, "LEVER": _lever, "ASHBY": _ashby, "SMARTR
             "WORKDAY": _workday, "WORKABLE": _workable, "RECRUITEE": _recruitee, "TEAMTAILOR": _teamtailor}
 
 
-def fetch_board(platform: str, slug: str, *, internships_only: bool = True) -> dict[str, Any]:
-    """Normalized jobs from one public board: {company, jobs, total}."""
+def fetch_board(platform: str, slug: str, *, internships_only: bool = True, places: list[str] | None = None) -> dict[str, Any]:
+    """Normalized jobs from one public board: {company, jobs, total}. `places` (country names) sharpens Workday searches."""
     if platform not in FETCHERS:
         raise ValueError(f"Unsupported job board: {platform}")
-    company, jobs, total = FETCHERS[platform](slug, internships_only)
+    company, jobs, total = _workday(slug, internships_only, places) if platform == "WORKDAY" else FETCHERS[platform](slug, internships_only)
     for job in jobs:
         job.update({"source": f"{platform.title()} board", "application_platform": platform, "extraction_status": "BOARD_API"})
         job["description"] = (job.get("description") or "").strip()
