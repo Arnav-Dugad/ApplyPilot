@@ -138,6 +138,15 @@ class Desktop:
             self.window.show()
             self.window.restore()
 
+    def on_shown(self) -> None:
+        # After an automatic update the silent installer starts us with a "hidden" show state, which Windows
+        # applies to our first window as minimized. Unless we were asked to start in the tray, bring it back.
+        if not self.minimized:
+            try:
+                self.window.restore()
+            except Exception:
+                pass
+
     def hwnd(self) -> int:
         try:
             return int(self.window.native.Handle.ToInt64())
@@ -173,6 +182,7 @@ class Desktop:
             return False
         self.window = webview.create_window(TITLE, self.url, width=1400, height=900, min_size=(1100, 700), background_color="#0a0d12", hidden=self.minimized)
         self.window.events.closing += self.on_closing
+        self.window.events.shown += self.on_shown
         shell.hooks.update({"toast": self.toast, "show": self.show, "dock": lambda: shell.dock_for_split(self.hwnd())})
         updater.set_quit_callback(self.quit)
         self.start_tray()

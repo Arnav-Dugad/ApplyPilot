@@ -73,7 +73,9 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
   const [touring, setTouring] = useState(false)
   const [help, setHelp] = useState(false)
   // After an automatic update, show that version's release notes once.
-  const justUpdated = Boolean(data.settings.whats_new_pending && data.settings.whats_new_pending === data.version && data.update?.notes && data.update.latest === data.version)
+  // Known from the first load (release notes can arrive a moment later), so the tour never starts on top of it.
+  const justUpdated = Boolean(data.settings.whats_new_pending && data.settings.whats_new_pending === data.version)
+  const notesReady = Boolean(data.update?.notes && data.update.latest === data.version)
   const dismissWhatsNew = useCallback(() => { api.settings({ whats_new_pending: null }).then(refresh).catch(() => undefined) }, [refresh])
   // The tour runs once for everyone (new installs and people updating from older versions), after any update celebration.
   const tourShown = useRef(false)
@@ -133,7 +135,7 @@ function AppShell({ data, refresh }: { data: Bootstrap; refresh: () => Promise<v
       <div className="sidebar-foot"><div className="privacy"><ShieldCheck /><div><b>Local & private</b><span>Data stays on this device</span></div></div><button onClick={() => setDark(!dark)}>{dark ? <Sun /> : <Moon />}{dark ? 'Light mode' : 'Dark mode'}</button></div></aside>
     <main><div className="topbar"><button className="command-button" data-tour="command" onClick={() => setPalette(true)}><Search />Search jobs, pages, actions…<kbd>Ctrl K</kbd></button>
       <div className="topbar-right"><button className="status" onClick={() => go('Autopilot')}><span className={`status-dot ${running ? 'running' : data.inbox.questions.length ? 'warn' : ''}`} /> {running ? (data.autopilot.runs[0]?.events.at(-1)?.message ?? 'Autopilot running') : data.autopilot.config.enabled ? `Autopilot on · next ${data.autopilot.next_run_at ? relativeTime(data.autopilot.next_run_at) : 'soon'}` : 'Autopilot off'}</button><button className="icon-button help-button" data-tour="help" onClick={() => setHelp(true)} aria-label="Help: what everything means"><CircleHelp /></button><Notifications data={data} refresh={refresh} go={go} /></div></div>
-      {justUpdated ? <UpdateSuccess version={data.version ?? ''} previous={data.settings.updated_from as string | undefined} onNotes={() => setNotesOpen(true)} onDismiss={dismissWhatsNew} />
+      {justUpdated ? <UpdateSuccess version={data.version ?? ''} previous={data.settings.updated_from as string | undefined} onNotes={notesReady ? () => setNotesOpen(true) : undefined} onDismiss={dismissWhatsNew} />
         : <UpdateBanner update={data.update} refresh={refresh} openNotes={() => setNotesOpen(true)} />}
       <div className="content page-enter" key={page}>
         {page === 'Home' ? <Home {...props} /> : page === 'Autopilot' ? <Autopilot {...props} /> : page === 'Inbox' ? <Inbox {...props} /> : page === 'Discover' ? <Discover key={askQuery?.n ?? 0} {...props} askQuery={askQuery?.q} /> : page === 'Queue' ? <Queue {...props} /> : page === 'Tracker' ? <Tracker {...props} />
