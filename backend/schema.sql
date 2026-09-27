@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS eligibility_results (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL UNIQUE,
-  result TEXT NOT NULL CHECK(result IN ('ELIGIBLE','LIKELY_ELIGIBLE','NEEDS_INFORMATION','INELIGIBLE')),
+  result TEXT NOT NULL,
   checks_json TEXT NOT NULL,
   match_json TEXT NOT NULL,
   recommended_cv_id TEXT,

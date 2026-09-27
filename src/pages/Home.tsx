@@ -47,13 +47,13 @@ export function Home({ data, go, openJob }: PageProps) {
       <div className="stack">
         {strength && <button className="strength-card" onClick={() => go('Profile')}>
           <ScoreRing score={strength.percent} size={82} stroke={7} />
-          <div><b>Profile strength</b><span>{strength.percent >= 100 ? 'Complete — every common field can autofill.' : 'Verified facts unlock more autofill and better matches.'}</span>
+          <div><b>Profile strength</b><span>{strength.percent >= 100 ? 'Complete — every common field can be filled for you.' : 'Each detail you add fills more of every form and sharpens your matches.'}</span>
             {strength.next.length > 0 && <ul>{strength.next.map(i => <li key={i.label}>+{i.points}% · {i.label}</li>)}</ul>}</div>
         </button>}
         <button className={`autopilot-strip ${running ? 'running' : ap.config.enabled ? 'on' : 'off'}`} onClick={() => go('Autopilot')}>
           <AutopilotOrb state={running ? 'running' : ap.config.enabled ? 'idle' : 'off'} size={46} />
           <div><b>{running ? 'Autopilot is working' : ap.config.enabled ? 'Autopilot is on' : 'Autopilot is off'}</b>
-            <span>{running ? last?.events.at(-1)?.message : last ? `Last run ${relativeTime(last.finished_at || last.started_at)}: ${last.summary.new ?? 0} new, ${last.summary.queued ?? 0} queued` : `Following ${data.watchlist.length} compan${data.watchlist.length === 1 ? 'y' : 'ies'}`}</span></div>
+            <span>{running ? last?.events.at(-1)?.message : last ? `Last run ${relativeTime(last.finished_at || last.started_at)}: ${last.summary.new ?? 0} new, ${last.summary.queued ?? 0} queued` : 'Searches worldwide job lists for you'}</span></div>
           <span className="strip-cta">{ap.config.enabled ? 'Open' : <><Zap size={14} /> Set up</>}<ArrowRight size={15} /></span>
         </button>
       </div>
@@ -64,16 +64,16 @@ export function Home({ data, go, openJob }: PageProps) {
 
     <section className="stats">
       <button className="stat" onClick={() => go('Discover')}><span>Internships found</span><strong><AnimatedNumber value={data.jobs.filter(j => !j.duplicate_of).length} /></strong><small>{data.jobs.filter(j => (j.score?.score ?? 0) >= 80 && !j.duplicate_of).length} strong matches</small></button>
-      <button className="stat stat-accent" onClick={() => go('Queue')}><span>Ready to submit</span><strong><AnimatedNumber value={ready} /></strong><small>Filled from verified facts</small></button>
+      <button className="stat stat-accent" onClick={() => go('Queue')}><span>Ready to submit</span><strong><AnimatedNumber value={ready} /></strong><small>Forms filled from your profile</small></button>
       <button className="stat" onClick={() => go('Inbox')}><span>Inbox</span><strong><AnimatedNumber value={data.inbox.questions.length + data.inbox.suggestions.length + data.inbox.drafts.length} /></strong><small>{data.inbox.questions.length} questions · {data.inbox.drafts.length} drafts</small></button>
       <button className="stat" onClick={() => go('Tracker')}><span>Applied</span><strong><AnimatedNumber value={applied} /></strong><small>{data.applications.filter(a => a.status === 'INTERVIEWING').length} interviewing · {data.applications.filter(a => a.status === 'OFFER').length} offers</small></button>
     </section>
 
     <div className="dashboard-grid">
-      <section className="panel wide"><div className="panel-head"><div><h2>Top matches</h2><p>Eligible first, then match score. Click one for the full breakdown.</p></div><button className="text-button" onClick={() => go('Discover')}>View all <ChevronRight size={15} /></button></div>
-        {topMatches.length ? <div className="job-list stagger">{topMatches.map(j => <JobRow key={j.id} job={j} onClick={() => openJob(j.id)} />)}</div> : <Empty icon={BriefcaseBusiness} title="No internships yet" text="Follow a few companies and let Autopilot find them, or paste a job link." action={() => go('Autopilot')} actionLabel="Set up Autopilot" />}
+      <section className="panel wide"><div className="panel-head"><div><h2>Best matches for you</h2><p>Jobs you can apply to first, then by score. Click one to see why.</p></div><button className="text-button" onClick={() => go('Discover')}>View all <ChevronRight size={15} /></button></div>
+        {topMatches.length ? <div className="job-list stagger">{topMatches.map(j => <JobRow key={j.id} job={j} onClick={() => openJob(j.id)} />)}</div> : <Empty icon={BriefcaseBusiness} title="No internships yet" text="Turn on Autopilot and it searches the whole internet for internships that fit you." action={() => go('Autopilot')} actionLabel="Set up Autopilot" />}
       </section>
-      <section className="panel"><div className="panel-head"><div><h2>Recent activity</h2><p>A human-readable audit trail.</p></div><button className="text-button" onClick={() => go('Activity')}>Full log <ChevronRight size={15} /></button></div><ActivityList items={data.activity.slice(0, 7)} /></section>
+      <section className="panel"><div className="panel-head"><div><h2>Recent activity</h2><p>What ApplyPilot did lately.</p></div><button className="text-button" onClick={() => go('Activity')}>Full history <ChevronRight size={15} /></button></div><ActivityList items={data.activity.slice(0, 7)} /></section>
     </div>
   </>
 }

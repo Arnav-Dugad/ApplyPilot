@@ -4,9 +4,10 @@ import { api } from './api'
 import { Modal } from './components/Modal'
 import { PrepPanel } from './components/PrepPanel'
 import { TailorModal } from './components/TailorModal'
+import { CheckList, Tags } from './components/Checks'
 import type { Bootstrap, Connection, JobDetail } from './types'
 import { ScoreRing, Skeleton } from './motion'
-import { Badge, eligibilityLabel, eligibilityTone, formatDate, relativeTime, useAction, useNotify, type Page } from './ui'
+import { Badge, ELIGIBILITY_HELP, SOURCE_NAMES, eligibilityLabel, eligibilityTone, formatDate, relativeTime, useAction, useNotify, type Page } from './ui'
 
 type Tab = 'overview' | 'prep'
 
@@ -38,11 +39,12 @@ export function JobDrawer({ jobId, data, refresh, close, go, openJob }: { jobId:
           <ScoreRing score={score?.score} size={78} stroke={6} />
           <div><p className="eyebrow">{job.company}</p><h2>{job.role}</h2>
             <span>{job.location || 'Location not stated'}{job.employment_type ? ` · ${job.employment_type}` : ''}{job.date_posted ? ` · posted ${relativeTime(job.date_posted)}` : ''}</span>
-            <div className="tags">{job.eligibility_result && <Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge>}{score && <Badge tone="accent">Grade {score.grade}</Badge>}<Badge>{job.application_platform || 'GENERIC'}</Badge>{job.compensation && <Badge tone="good">{job.compensation}</Badge>}{job.duplicate_of && <Badge tone="warn">Duplicate posting</Badge>}</div></div>
+            <div className="tags">{job.eligibility_result && <Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge>}{job.compensation && <Badge tone="good">{job.compensation}</Badge>}{job.duplicate_of && <Badge tone="warn">Posted twice</Badge>}</div>
+            <Tags tags={data.jobs.find(j => j.id === job.id)?.tags} /></div>
         </header>
         <div className="drawer-actions">
           {job.application ? <button className="button subtle" onClick={() => { go('Queue'); close() }}>In queue · {job.application.status.replaceAll('_', ' ').toLowerCase()}</button>
-            : <button className="button primary" disabled={busy === 'queue' || job.eligibility_result === 'INELIGIBLE'} onClick={() => run('queue', () => api.queueJob(job.id), 'Queued and form checked')}><ListPlus size={16} /> Add to queue</button>}
+            : <button className="button primary" disabled={busy === 'queue' || job.eligibility_result === 'INELIGIBLE'} title={job.eligibility_result === 'INELIGIBLE' ? 'Something in the posting rules you out' : 'ApplyPilot checks the form and fills what it can'} onClick={() => run('queue', () => api.queueJob(job.id), 'Added — the form is being checked')}><ListPlus size={16} /> Get it ready</button>}
           {job.posting_url && <a className="button ghost" href={job.posting_url} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Posting</a>}
           <button className="button ghost" disabled={!hasCV} title={hasCV ? 'Reorder your CV for this role' : 'Approve a CV first'} onClick={() => setTailor({ ai: false })}><FileText size={15} /> Tailor CV</button>
           {aiOn && <button className="button ghost" disabled={!hasCV} onClick={() => setTailor({ ai: true })}><Wand2 size={15} /> AI tailor</button>}
@@ -65,16 +67,17 @@ export function JobDrawer({ jobId, data, refresh, close, go, openJob }: { jobId:
             <div className="people">{job.referrals.map(p => <div key={p.id} className="person"><div className="avatar">{(p.first_name[0] ?? '') + (p.last_name[0] ?? '')}</div><div><b>{p.first_name} {p.last_name}</b><span>{p.position}</span></div>
               <button className="button subtle" onClick={() => askReferral(p)}>Ask for a referral</button></div>)}</div></section>}
 
-          {score && <section className="drawer-section"><h3>Why it scored {score.score}</h3>
+          {score && <section className="drawer-section"><h3>Why it scored {score.score} out of 100</h3>
             <div className="factors">{score.factors.map(f => <div key={f.name} className={`factor ${f.points < 0 ? 'negative' : ''}`}><span>{f.name}</span><div className="factor-bar"><i style={{ width: `${(Math.abs(f.points) / f.max) * 100}%` }} /></div><b>{f.points < 0 ? '−' : ''}{Math.round(Math.abs(f.points))}/{f.max}</b><small>{f.detail}</small></div>)}</div>
             {score.adjustment && <p className="warn-text small">{score.adjustment}</p>}
           </section>}
 
-          {job.eligibility_checks && <section className="drawer-section"><h3>Eligibility checks</h3>
-            {job.eligibility_checks.map(c => <div key={c.name} className="check-line"><Badge tone={c.result === 'PASS' ? 'good' : c.result === 'FAIL' ? 'bad' : 'warn'}>{c.result}</Badge><b>{c.name}</b><span>{c.explanation}</span></div>)}
-            {job.eligibility_result === 'NEEDS_INFORMATION' && <button className="link" onClick={() => { go('Profile'); close() }}>Add the missing facts in your profile →</button>}
+          {job.eligibility_checks && <section className="drawer-section"><h3>Can you apply?</h3>
+            {job.eligibility_result && <p className={`verdict ${eligibilityTone(job.eligibility_result)}`}><b>{eligibilityLabel(job.eligibility_result)}.</b> {ELIGIBILITY_HELP[job.eligibility_result]}</p>}
+            <CheckList checks={job.eligibility_checks} />
+            {job.eligibility_result === 'NEEDS_INFORMATION' && <button className="link" onClick={() => { go('Profile'); close() }}>Fill in the missing details in your profile →</button>}
             {job.eligibility_match && <div className="skill-line">{job.eligibility_match.strong.map(s => <Badge key={s} tone="good">{s}</Badge>)}{job.eligibility_match.related?.map(s => <Badge key={s} tone="accent">{s} ~</Badge>)}{job.eligibility_match.missing.filter(s => !job.eligibility_match?.related?.includes(s)).map(s => <Badge key={s} tone="bad">{s}</Badge>)}</div>}
-            <small className="muted">Green: verified skills · Blue ~: you know a related skill · Red: missing</small>
+            <small className="muted">Green: skills you have · Blue ~: you know something similar · Red: missing</small>
           </section>}
 
           {job.languages && (job.languages.required.length > 0 || job.languages.preferred.length > 0) && <section className="drawer-section"><h3><Languages size={15} /> Languages</h3>
@@ -90,7 +93,7 @@ export function JobDrawer({ jobId, data, refresh, close, go, openJob }: { jobId:
 
           {letter && <section className="drawer-section"><h3><PenLine size={15} /> Cover letter {letter.status === 'APPROVED' ? <Badge tone="good">approved</Badge> : <Badge tone="warn">draft</Badge>}</h3><p className="letter">{letter.content}</p>{letter.status !== 'APPROVED' && <button className="link" onClick={() => { go('Inbox'); close() }}>Review and approve in Inbox →</button>}</section>}
 
-          <footer className="drawer-foot">Found {formatDate(job.date_found)} via {job.source}{job.deadline ? ` · closes ${formatDate(job.deadline)}` : ''}</footer>
+          <footer className="drawer-foot">Found {formatDate(job.date_found)} on {SOURCE_NAMES[job.source ?? ''] ?? job.source}{job.deadline ? ` · closes ${formatDate(job.deadline)}` : ''}</footer>
         </>}
       </div>}
     </aside>

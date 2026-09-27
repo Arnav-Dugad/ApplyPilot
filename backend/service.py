@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, ai, cv_tailor, discovery, insights, shell
-from .automation import COUNTRY_SCOPED, FACT_MAPPING, dry_run, field_definitions
+from . import __version__, ai, cv_tailor, discovery, insights, requirements, shell, sources
+from .automation import COUNTRY_SCOPED, FACT_MAPPING, countries_named, dry_run, field_definitions
 from .cv_extract import extract as extract_cv
 from .database import Database, now
 from .eligibility import evaluate, extract_skills
@@ -23,6 +23,9 @@ from .languages import detect as detect_languages
 from . import referrals
 from .safety import TEXT_FACTS, YES_NO_OPTIONS, classify_field, is_yes_no_question, normalize
 from .scoring import job_country, location_match, preferred_locations, score
+from .countries import country_key, country_name
+from .student import get as get_fact_value, profile as student_profile
+from .skills import canonical
 
 DB = Database()
 ACTIVE_STATUSES = ("QUEUED", "NEEDS_INFO", "WAITING_FOR_USER", "READY_FOR_REVIEW")
@@ -94,7 +97,7 @@ def notify(kind: str, title: str, body: str = "", page: str | None = None) -> No
 JOB_COLUMNS = ["id", "company", "role", "location", "country", "remote_status", "posting_url", "application_url", "source", "date_found", "date_posted", "deadline", "description",
                "required_skills_json", "preferred_skills_json", "degree_requirements", "graduation_requirements", "experience_requirements", "work_authorization", "sponsorship_information",
                "duration", "start_date", "compensation", "application_platform", "requisition_id", "raw_snapshot", "extraction_status", "external_id", "board_questions_json", "employment_type",
-               "fingerprint", "duplicate_of"]
+               "fingerprint", "duplicate_of", "requirements_json", "listing_json"]
 
 
 def save_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -114,6 +117,9 @@ def save_job(payload: dict[str, Any]) -> dict[str, Any]:
     original = DB.one("SELECT id FROM jobs WHERE fingerprint=? AND id != ? AND duplicate_of IS NULL AND (posting_url IS NULL OR posting_url != ?) ORDER BY date_found LIMIT 1",
                       (payload["fingerprint"], job_id, payload.get("posting_url") or ""))
     payload["duplicate_of"] = original["id"] if original else None  # the same opening posted twice (another board, or re-posted)
+    listing = payload.get("listing") or {}
+    payload["requirements_json"] = json.dumps(requirements.extract(str(payload.get("role") or ""), payload.get("description") or "", listing))
+    payload["listing_json"] = json.dumps(listing) if listing else None
     values = {
         **payload, "id": job_id, "date_found": payload.get("date_found", now()),
         "source": payload.get("source", "MANUAL"), "description": payload.get("description") or "",
@@ -182,7 +188,7 @@ def analyze_all() -> int:
     return len(rows)
 
 
-RESCORING_CATEGORIES = {"skills", "languages", "work_authorization", "sponsorship", "education", "preferences"}
+RESCORING_CATEGORIES = {"skills", "languages", "work_authorization", "sponsorship", "education", "preferences", "citizenship", "experience"}
 
 
 def save_fact(payload: dict[str, Any]) -> dict[str, Any]:
@@ -190,6 +196,48 @@ def save_fact(payload: dict[str, Any]) -> dict[str, Any]:
     saved = decoded([DB.upsert_fact(payload)])[0]
     rescored = analyze_all() if payload.get("category") in RESCORING_CATEGORIES else 0
     return saved | {"reprepared": reprepare_active(), "rescored": rescored}
+
+
+def backfill_requirements() -> int:
+    """Re-reads every job's requirements once after the extractor improves (or for jobs saved before 0.5)."""
+    if DB.setting("requirements_version") == requirements.VERSION and not DB.one("SELECT id FROM jobs WHERE requirements_json IS NULL LIMIT 1"):
+        return 0
+    rows = DB.rows("SELECT id, company, role, description, listing_json FROM jobs")
+    updates = [(json.dumps(requirements.extract(r["role"] or "", r["description"] or "", json.loads(r["listing_json"]) if r["listing_json"] else None)), r["id"]) for r in rows]
+    skill_updates = []
+    for r in rows:  # the skill reader improves too (e.g. "Spring 2027" is no longer the Spring framework)
+        if r["description"]:
+            company = normalize(str(r["company"] or ""))
+            required, preferred = extract_skills(r["description"])
+            skill_updates.append((json.dumps([x for x in required if normalize(x) != company]), json.dumps([x for x in preferred if normalize(x) != company]), r["id"]))
+    with DB._lock, DB.connect() as conn:
+        conn.executemany("UPDATE jobs SET requirements_json=? WHERE id=?", updates)
+        conn.executemany("UPDATE jobs SET required_skills_json=?, preferred_skills_json=? WHERE id=?", skill_updates)
+    DB.set_setting("requirements_version", requirements.VERSION)
+    analyze_all()
+    return len(updates)
+
+
+def backfill_countries() -> int:
+    """Jobs saved before 0.5 without a country get one from their location ("Pittsburgh, PA" -> US)."""
+    rows = DB.rows("SELECT id, location FROM jobs WHERE country IS NULL OR country = ''")
+    updates = [(code, r["id"]) for r in rows if (code := job_country({"location": r["location"]})) and len(code) == 2 and code.isupper()]
+    if updates:
+        with DB._lock, DB.connect() as conn:
+            conn.executemany("UPDATE jobs SET country=? WHERE id=?", updates)
+    return len(updates)
+
+
+def _background_backfill() -> None:
+    try:
+        countries = backfill_countries()
+        if not backfill_requirements() and countries:
+            analyze_all()
+        if DB.setting("prepared_version") != __version__:
+            reprepare_active()  # re-check every form in progress with this version's rules, once
+            DB.set_setting("prepared_version", __version__)
+    except Exception:
+        DB.log("BACKFILL_FAILED", details={"error": traceback.format_exc()[-500:]}, level="ERROR")
 
 
 def backfill_fingerprints() -> int:
@@ -297,10 +345,18 @@ def inbox() -> dict[str, Any]:
         for f in app.get("field_state") or []:
             if f.get("decision", {}).get("action") != "PAUSE":
                 continue
-            kind = _question_kind(f.get("classification", "UNKNOWN"))
-            key = normalize(f["label"]) + (f"|{app.get('country') or ''}" if kind == "COUNTRY_FACT" else "")
-            group = groups.setdefault(key, {"key": key, "question": f["label"], "classification": f.get("classification"), "kind": kind, "options": f.get("options") or [],
-                                            "required": False, "reason": f["decision"].get("reason"), "country": app.get("country") if kind == "COUNTRY_FACT" else None, "applications": []})
+            # Classified again with today's rules: a form checked by an older version may carry an outdated label.
+            classification = classify_field(f["label"], f.get("name") or "", f.get("field_type") or "", f.get("options") or [])
+            kind = _question_kind(classification)
+            country = None
+            if kind == "COUNTRY_FACT":
+                named = countries_named(f["label"])
+                country = next(iter(named)) if len(named) == 1 else app.get("country") if not named else None
+                if not country:
+                    kind = "ANSWER"  # no single country to file it under: it's saved as an answer to this exact question
+            key = normalize(f["label"]) + (f"|{country}" if kind == "COUNTRY_FACT" else "")
+            group = groups.setdefault(key, {"key": key, "question": f["label"], "classification": classification if kind != "ANSWER" or classification not in COUNTRY_SCOPED else "UNKNOWN",
+                                            "kind": kind, "options": f.get("options") or [], "required": False, "reason": f["decision"].get("reason"), "country": country, "applications": []})
             group["required"] = group["required"] or bool(f.get("required"))
             if not any(a["id"] == app["id"] for a in group["applications"]):
                 group["applications"].append({"id": app["id"], "job_id": app["job_id"], "company": app.get("company"), "role": app.get("role")})
@@ -414,7 +470,37 @@ def accept_suggestion(suggestion_id: str, value: Any = None) -> dict[str, Any]:
     DB.upsert_fact({"category": s["category"], "fact_key": s["fact_key"], "value": chosen, "status": "VERIFIED", "source": s["source"]})
     DB.execute("UPDATE suggestions SET status='ACCEPTED' WHERE id=?", (suggestion_id,))
     reprepare_active()
+    if s["category"] in RESCORING_CATEGORIES:
+        analyze_all()
     return {"ok": True}
+
+
+def derive_suggestions() -> int:
+    """Profile facts ApplyPilot can work out from what you've already verified. They wait in your Inbox until you
+    confirm them — nothing here is ever saved silently."""
+    rows = [f for f in facts() if f.get("status") == "VERIFIED"]
+    me = student_profile(rows)
+    found: list[dict[str, Any]] = []
+    if not me["citizenship_known"]:
+        yes = [f for f in rows if f["category"] == "work_authorization" and f["fact_key"] == "authorized" and f.get("value") is True and f.get("country_code")]
+        needs = [f for f in rows if f["category"] == "sponsorship" and f["fact_key"] == "requires_sponsorship" and f.get("value") is True]
+        if len(yes) == 1 and len(needs) >= 3:
+            home = country_key(yes[0]["country_code"])
+            found.append({"category": "citizenship", "fact_key": "countries", "value": [country_name(home) or yes[0]["country_code"]], "confidence": 0.8,
+                          "evidence": f"You can work in {country_name(home)} without a visa and need one in {len(needs)} other countries. Confirm your citizenship and ApplyPilot will work out every other country for you."})
+    if "enrolled" in me["derived"] and me["enrolled"] is True:
+        found.append({"category": "education", "fact_key": "enrolled", "value": True, "confidence": 0.9,
+                      "evidence": f"You graduate in {me['graduation']}, so you're a current student."})
+    if "year_of_study" in me["derived"] and me["year_of_study"]:
+        found.append({"category": "education", "fact_key": "year_of_study", "value": me["year_of_study"], "confidence": 0.7,
+                      "evidence": f"Worked out from your {me['graduation']} graduation and a {me['program_years']}-year degree."})
+    roles = get_fact_value(rows, "preferences", "roles")
+    if not roles and re.search(r"(?i)comput|software|information|data|artificial|electronic", str(me.get("major") or "")):
+        found.append({"category": "preferences", "fact_key": "roles", "value": ["Software engineering", "Data science", "AI / Machine learning"], "confidence": 0.6,
+                      "evidence": f"You study {me['major']}. Autopilot will then skip roles like sales or finance from worldwide lists. Edit the list before confirming if you like."})
+    if "level" in me["derived"] and me["level"]:
+        found.append({"category": "education", "fact_key": "level", "value": me["level"], "confidence": 0.7, "evidence": "Worked out from your degree name."})
+    return add_suggestions(found, "PROFILE_RULES") if found else 0
 
 
 def dismiss_suggestion(suggestion_id: str) -> dict[str, Any]:
@@ -501,6 +587,184 @@ def add_watch(text: str) -> dict[str, Any]:
     return {"id": watch_id, "company": catalog_name or result["company"], "internships": len(result["jobs"]), "total": result["total"]}
 
 
+# ---------- worldwide sources ----------
+
+ROLE_KEYWORDS = {
+    "software": r"software|developer|engineer|swe\b|back ?end|front ?end|full ?stack|mobile|ios|android|web|platform|infrastructure|devops|sre\b|cloud|security|systems|programmer|coding",
+    "data": r"data|analytics|analyst|\bbi\b|business intelligence",
+    "ai": r"machine learning|\bml\b|\bai\b|artificial intelligence|deep learning|\bnlp\b|computer vision|\bllm|research",
+    "product": r"product",
+    "design": r"design|\bux\b|\bui\b",
+    "quant": r"quant|trading",
+    "hardware": r"hardware|embedded|firmware|electrical|fpga|asic|robotics",
+    "business": r"business|sales|marketing|operations|finance|consult|strategy",
+}
+
+
+def role_matches(job: dict[str, Any], roles: list[str]) -> bool:
+    """True when the title (or the board's category) fits one of your preferred roles. No roles set = everything fits."""
+    if not roles:
+        return True
+    title = f"{job.get('role') or ''} {(job.get('listing') or {}).get('category') or ''}".lower()
+    for role in roles:
+        text = str(role).lower()
+        group = next((k for k in ROLE_KEYWORDS if k in text or (k == "ai" and "machine learning" in text) or (k == "software" and "engineer" in text)), None)
+        if group and re.search(ROLE_KEYWORDS[group], title):
+            return True
+        if not group and text and re.search(rf"\b{re.escape(text)}\b", title):
+            return True
+    return False
+
+
+def place_job(job: dict[str, Any], prefs: list[str]) -> bool | None:
+    """Picks the job's country from its locations (preferring one you'd go to) and says whether it fits your locations."""
+    places = job.get("locations") or [job.get("location")]
+    remote_countries = (job.get("listing") or {}).get("remote_countries") or []
+    candidates = []
+    for place in places:
+        code = sources.location_country(place)
+        candidates.append(({**job, "location": place, "country": code}, code))
+    for name in remote_countries:
+        code = country_key(name)
+        candidates.append(({**job, "location": name, "country": code, "remote_status": None}, code))
+    fits = [location_match(c, prefs)[0] for c, _ in candidates] or [None]
+    chosen = next((code for (c, code), ok in zip(candidates, fits) if ok and code), None)
+    job["country"] = job.get("country") or chosen or next((code for _, code in candidates if code), None)
+    if True in fits:
+        return True
+    if remote_countries:
+        return False  # remote, but only for people in other countries
+    return None if None in fits else False
+
+
+def discover_worldwide(cfg: dict[str, Any], prefs: list[str], roles: list[str], event: Callable[..., None], summary: dict[str, Any],
+                       fetch: Callable[[str], list[dict[str, Any]]] | None = None, enrich: Callable[..., list[dict[str, Any]]] | None = None) -> list[str]:
+    """Searches every enabled worldwide source, keeps internships that fit your locations and roles, and saves them."""
+    fetch = fetch or sources.fetch
+    enrich = enrich or sources.enrich_many
+    enabled = {**{k: True for k in sources.SOURCES}, **(DB.setting("sources") or {})}
+    status = DB.setting("source_status") or {}
+    known_ids = {r["external_id"] for r in DB.rows("SELECT external_id FROM jobs WHERE external_id IS NOT NULL")}
+    known_urls = {r["posting_url"] for r in DB.rows("SELECT posting_url FROM jobs WHERE posting_url IS NOT NULL")}
+    keep: list[dict[str, Any]] = []
+    for key, meta in sources.SOURCES.items():
+        if not enabled.get(key):
+            continue
+        try:
+            found = fetch(key)
+        except Exception as exc:  # one broken feed never stops the run
+            status[key] = {"at": now(), "error": str(exc)[:200], "found": 0, "new": 0}
+            event("worldwide", f"{meta['name']}: couldn't be reached ({exc})", "WARN", source=key)
+            continue
+        fresh = filtered = 0
+        for job in found:
+            summary["found"] += 1
+            if job.get("external_id") in known_ids or job.get("posting_url") in known_urls:
+                continue
+            if cfg["internships_only"] and not discovery.is_internship(job.get("role", ""), job.get("employment_type")):
+                continue
+            fits = place_job(job, prefs)
+            if (cfg["location_filter"] and fits is False) or not role_matches(job, roles):
+                filtered += 1
+                continue
+            known_urls.add(job.get("posting_url"))
+            keep.append(job)
+            fresh += 1
+            if fresh >= 250:
+                break
+        summary["filtered"] += filtered
+        status[key] = {"at": now(), "error": None, "found": len(found), "new": fresh}
+        event("worldwide", f"{meta['name']}: {len(found)} openings, {fresh} fit you" + (f" ({filtered} skipped: other places or roles)" if filtered else ""), source=key, new=fresh)
+    DB.set_setting("source_status", status)
+    if keep:
+        keep.sort(key=lambda j: j.get("date_posted") or "", reverse=True)
+        need = sum(1 for j in keep if not j.get("description"))
+        if need:
+            event("worldwide", f"Reading the full posting for {min(need, 60)} listings from their company pages")
+        keep = enrich(keep, 60)
+    new_ids = []
+    for job in keep:
+        if job.get("external_id") in known_ids:
+            continue  # enrichment revealed a job you already had (found through a followed company)
+        known_ids.add(job.get("external_id"))
+        job.pop("locations", None)
+        new_ids.append(save_job(job)["id"])
+    summary["new"] += len(new_ids)
+    summary["worldwide"] = len(new_ids)
+    return new_ids
+
+
+def sources_state() -> dict[str, Any]:
+    enabled = {**{k: True for k in sources.SOURCES}, **(DB.setting("sources") or {})}
+    status = DB.setting("source_status") or {}
+    counts = {r["source"]: r["n"] for r in DB.rows("SELECT source, COUNT(*) AS n FROM jobs GROUP BY source")}
+    return {"sources": [{"key": k, "name": v["name"], "about": v["about"], "enabled": bool(enabled.get(k)), "status": status.get(k), "jobs": counts.get(k, 0)}
+                        for k, v in sources.SOURCES.items()],
+            "worldwide": AUTOPILOT.config().get("worldwide", True)}
+
+
+# ---------- GitHub projects ----------
+
+def _project_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:40] or "project"
+
+
+def import_github_projects(links: list[str]) -> dict[str, Any]:
+    """Saves several GitHub repositories as projects at once. Skills they use that aren't in your verified
+    skills are returned as suggestions, never added silently."""
+    from . import github_import
+    if not links:
+        raise ValueError("Pick at least one repository")
+    if len(links) > 20:
+        raise ValueError("Import up to 20 repositories at a time")
+    saved, errors = [], []
+    for link in links:
+        try:
+            project = github_import.project(link)
+        except github_import.GitHubError as exc:
+            errors.append({"link": link, "error": str(exc)})
+            if "60 lookups" in str(exc):
+                break
+            continue
+        DB.upsert_fact({"category": "projects", "fact_key": _project_key(project["name"]), "value": project, "status": "VERIFIED", "source": "GITHUB"})
+        saved.append(project)
+    known = {canonical(s) for f in facts() if f["category"] == "skills" and f.get("status") == "VERIFIED" for s in (f.get("value") if isinstance(f.get("value"), list) else [f.get("value")]) if s}
+    new_skills = sorted({s for p in saved for s in p["skills"] if canonical(s) not in known}, key=str.lower)
+    if saved:
+        DB.log("GITHUB_PROJECTS_IMPORTED", details={"count": len(saved)})
+    return {"saved": saved, "errors": errors, "new_skills": new_skills}
+
+
+def student_summary(fact_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    me = student_profile(fact_rows)
+    me["experience"] = {k: v for k, v in me["experience"].items() if k != "entries"}
+    return me
+
+
+def visa_overview(fact_rows: list[dict[str, Any]], jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Can you work there? For your citizenship countries, your preferred countries, and where your jobs are."""
+    from . import visa
+    me = student_profile(fact_rows)
+    codes: list[str] = list(me["citizenships"])
+    for place in preferred_locations(fact_rows):
+        code = country_key(place)
+        if code and len(code) == 2 and code.isupper():
+            codes.append(code)
+    counts: dict[str, int] = {}
+    for job in jobs:
+        if job.get("country_code"):
+            counts[job["country_code"]] = counts.get(job["country_code"], 0) + 1
+    codes += [c for c, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:10]]
+    seen: list[str] = []
+    for code in codes:
+        if code not in seen:
+            seen.append(code)
+    rows = visa.summary(fact_rows, seen[:24])
+    for row in rows:
+        row["jobs"] = counts.get(row["country"], 0)
+    return rows
+
+
 # ---------- Autopilot ----------
 
 class Autopilot:
@@ -573,10 +837,12 @@ class Autopilot:
         self.execute(run_id)
         return one("SELECT * FROM autopilot_runs WHERE id=?", (run_id,))
 
-    def execute(self, run_id: str, fetch: Callable[..., dict[str, Any]] | None = None) -> None:
+    def execute(self, run_id: str, fetch: Callable[..., dict[str, Any]] | None = None, source_fetch: Callable[[str], list[dict[str, Any]]] | None = None) -> None:
+        # Tests inject a board fetcher; the worldwide search then only runs if they inject one for it too (no network in tests).
+        worldwide_fetch = source_fetch or (None if fetch else sources.fetch)
         fetch = fetch or discovery.fetch_board
         events: list[dict[str, Any]] = []
-        summary = {"boards": 0, "found": 0, "new": 0, "filtered": 0, "analyzed": 0, "queued": 0, "prepared": 0, "ready": 0, "needs_you": 0, "summaries": 0, "letters": 0}
+        summary = {"boards": 0, "found": 0, "new": 0, "worldwide": 0, "filtered": 0, "analyzed": 0, "queued": 0, "prepared": 0, "ready": 0, "needs_you": 0, "summaries": 0, "letters": 0}
 
         def event(step: str, message: str, level: str = "INFO", **data: Any) -> None:
             events.append({"at": now(), "step": step, "message": message, "level": level, **data})
@@ -611,6 +877,11 @@ class Autopilot:
                 summary["new"] += fresh
                 DB.execute("UPDATE watchlist SET last_scanned_at=?,last_status=?,jobs_seen=?,internships_seen=? WHERE id=?", (now(), "OK", result["total"], len(result["jobs"]), board["id"]))
                 event("scan", f"{board['company']}: {len(result['jobs'])} internship{'s' if len(result['jobs']) != 1 else ''}, {fresh} new", company=board["company"], new=fresh)
+
+            if cfg.get("worldwide", True) and worldwide_fetch:
+                event("worldwide", "Searching worldwide internship lists")
+                new_ids += discover_worldwide(cfg, prefs, student_profile(fact_rows)["roles"], event, summary, worldwide_fetch,
+                                              None if source_fetch is None else (lambda jobs, limit: jobs))
 
             summary["analyzed"] = analyze_all()
             event("analyze", f"Scored {summary['analyzed']} jobs against your verified profile")
@@ -715,16 +986,21 @@ def bootstrap() -> dict[str, Any]:
     if not _backfilled:
         _backfilled = True
         backfill_fingerprints()
+        derive_suggestions()
+        # Re-reading every posting after an update takes a few seconds, so the window opens straight away.
+        threading.Thread(target=_background_backfill, name="requirements-backfill", daemon=True).start()
     settings = public_settings()
     jobs = decoded(DB.rows("""SELECT jobs.id,company,role,location,country,remote_status,posting_url,application_url,source,date_found,date_posted,deadline,compensation,employment_type,
         substr(description,1,700) AS description,required_skills_json,preferred_skills_json,work_authorization,sponsorship_information,application_platform,extraction_status,ai_summary_json,
-        duplicate_of, (SELECT vote FROM job_feedback f WHERE f.job_id=jobs.id) AS vote,
+        duplicate_of, requirements_json, (SELECT vote FROM job_feedback f WHERE f.job_id=jobs.id) AS vote,
         CASE WHEN board_questions_json IS NULL THEN 0 ELSE json_array_length(board_questions_json) END AS question_count,
         e.result AS eligibility_result,e.checks_json AS eligibility_checks_json,e.match_json AS eligibility_match_json,e.score_json AS score_json
         FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id ORDER BY date_found DESC"""))
     for job in jobs:
         code = job_country(job)
         job["country_code"] = code if code and len(code) == 2 and code.isupper() else None
+        job.pop("requirements_json", None)
+        job["tags"] = requirements.tags(job.pop("requirements", None) or {})
     apps = decoded(DB.rows("""SELECT applications.*,jobs.company,jobs.role,jobs.location,jobs.country,jobs.posting_url,jobs.application_url,jobs.deadline,cvs.name AS cv_name,
         (SELECT e.id FROM email_events e WHERE e.application_id=applications.id AND e.action='MOVE' ORDER BY e.created_at DESC LIMIT 1) AS email_event_id
         FROM applications JOIN jobs ON jobs.id=applications.job_id LEFT JOIN cvs ON cvs.id=applications.cv_id ORDER BY applications.updated_at DESC"""))
@@ -749,6 +1025,8 @@ def bootstrap() -> dict[str, Any]:
         "health": insights.health(DB.rows("SELECT * FROM watchlist"), jobs, apps, fact_rows, decoded(DB.rows("SELECT * FROM answer_vault")), any(c["approved"] for c in cvs), settings["email_sync"]),
         "connections": DB.one("SELECT COUNT(*) AS n FROM connections")["n"],
         "offers": offers_overview(settings.get("base_currency") or "USD"),
+        "student": student_summary(fact_rows),
+        "visa": visa_overview(fact_rows, jobs),
     }
 
 
@@ -876,7 +1154,7 @@ def email_events() -> list[dict[str, Any]]:
 # ---------- companies, referrals, prep ----------
 
 def companies() -> list[dict[str, Any]]:
-    jobs = decoded(DB.rows("SELECT jobs.id, company, role, duplicate_of, date_found, e.score_json FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id"))
+    jobs = decoded(DB.rows("SELECT jobs.id, company, role, duplicate_of, date_found, date_posted, e.score_json FROM jobs LEFT JOIN eligibility_results e ON e.job_id=jobs.id"))
     apps = DB.rows("SELECT applications.status, jobs.company FROM applications JOIN jobs ON jobs.id=applications.job_id")
     watch = {insights.company_key(w["company"]): w for w in DB.rows("SELECT * FROM watchlist")}
     people = {}
@@ -888,13 +1166,16 @@ def companies() -> list[dict[str, Any]]:
         key = insights.company_key(job.get("company"))
         if not key:
             continue
-        g = grouped.setdefault(key, {"key": key, "name": job.get("company"), "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": ""})
+        g = grouped.setdefault(key, {"key": key, "name": job.get("company"), "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": "", "seasons": [0] * 12})
         if not job.get("duplicate_of"):
             g["jobs"] += 1
+            stamp = job.get("date_posted") or job.get("date_found")
+            if stamp and re.match(r"\d{4}-\d{2}", stamp):
+                g["seasons"][int(stamp[5:7]) - 1] += 1  # when this company posts, for the card's hiring-season side
         g["best_score"] = max(g["best_score"], (job.get("score") or {}).get("score", 0))
         g["last_seen"] = max(g["last_seen"], job.get("date_found") or "")
     for key, w in watch.items():
-        grouped.setdefault(key, {"key": key, "name": w["company"], "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": w.get("last_scanned_at") or ""})
+        grouped.setdefault(key, {"key": key, "name": w["company"], "jobs": 0, "best_score": 0, "applications": 0, "statuses": {}, "last_seen": w.get("last_scanned_at") or "", "seasons": [0] * 12})
     for app in apps:
         key = insights.company_key(app["company"])
         if key in grouped:

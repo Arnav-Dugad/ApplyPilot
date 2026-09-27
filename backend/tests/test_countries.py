@@ -46,15 +46,23 @@ class SponsorshipEligibilityTests(unittest.TestCase):
     def test_not_needing_sponsorship_passes(self):
         facts = [fact("sponsorship", "requires_sponsorship", False, "United Kingdom"), fact("work_authorization", "authorized", True, "GB")]
         result = evaluate(self.job, facts)
-        self.assertEqual(next(c for c in result["checks"] if c["name"] == "Sponsorship")["result"], "PASS")
+        self.assertEqual(next(c for c in result["checks"] if c["name"] == "Right to work")["result"], "PASS")
         self.assertEqual(result["result"], "ELIGIBLE")
 
     def test_unknown_need_asks(self):
         self.assertEqual(evaluate(self.job, [])["result"], "NEEDS_INFORMATION")
 
-    def test_ambiguous_wording_asks_even_when_need_is_known(self):
+    def test_unclear_sponsorship_means_visa_needed_not_rejected(self):
         job = {**self.job, "sponsorship_information": "Sponsorship considered case by case."}
-        self.assertEqual(evaluate(job, [fact("sponsorship", "requires_sponsorship", True, "GB")])["result"], "NEEDS_INFORMATION")
+        result = evaluate(job, [fact("sponsorship", "requires_sponsorship", True, "GB")])
+        self.assertEqual(result["result"], "VISA_NEEDED")
+        self.assertIn("doesn't say", next(c for c in result["checks"] if c["name"] == "Visa")["explanation"])
+
+    def test_offered_sponsorship_is_a_softer_visa_state(self):
+        job = {**self.job, "sponsorship_information": "We offer visa sponsorship for this role."}
+        result = evaluate(job, [fact("sponsorship", "requires_sponsorship", True, "GB")])
+        self.assertEqual(result["result"], "VISA_NEEDED")
+        self.assertTrue(result["sponsors"])
 
 
 if __name__ == "__main__":

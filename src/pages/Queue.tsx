@@ -16,20 +16,20 @@ export function Queue({ data, refresh, go, openJob }: PageProps) {
   const blocked = new Set(required.flatMap(q => q.applications.map(a => a.id))).size
 
   return <>
-    <PageHeading eyebrow="Application queue" title={ready ? `${ready} ready for you to submit` : 'Safe automation workspace'} text="ApplyPilot fills forms from verified facts only, highlights what it can't answer, and never presses submit.">
+    <PageHeading eyebrow="Ready to apply" title={ready ? `${ready} ready for you to submit` : 'Applications being prepared'} text="ApplyPilot fills each form from your profile, shows what it couldn't answer, and never presses submit. Open one in Edge, check it, and submit it yourself.">
       <button className="button ghost" disabled={busy === 'all'} onClick={() => run('all', async () => { for (const a of active) await api.prepare(a.id) }, 'All forms re-checked')}><RefreshCw size={15} className={busy === 'all' ? 'spin' : ''} /> Re-check all</button>
-      <Badge tone="good"><ShieldCheck size={13} /> Never auto-submits</Badge>
+      <Badge tone="good"><ShieldCheck size={13} /> You press submit</Badge>
     </PageHeading>
-    {!hasApprovedCV && active.length > 0 && <div className="attention banner"><FileText /><div><b>No approved CV yet</b><p>Résumé fields stay paused until a CV is approved. <button className="link" onClick={() => go('CV Library')}>Open CV Library</button></p></div></div>}
+    {!hasApprovedCV && active.length > 0 && <div className="attention banner"><FileText /><div><b>No approved CV yet</b><p>CV upload boxes stay empty until you approve a CV. <button className="link" onClick={() => go('CV Library')}>Open My CVs</button></p></div></div>}
     {blocked > 0 && <button className="attention as-button banner" onClick={() => go('Inbox')}><AlertTriangle /><div><b>{required.length} required question{required.length > 1 ? 's' : ''} hold back {blocked} application{blocked > 1 ? 's' : ''}</b><p>Answer them once in your Inbox and every application below updates.</p></div></button>}
     <section className="panel">{active.length ? <div className="queue-list">{active.map((app, i) => <QueueCard key={app.id} app={app} index={i} busy={busy} validation={validation[app.id]}
       onPrepare={() => run(`prep-${app.id}`, () => api.prepare(app.id), r => `${r.filled_count} filled · ${r.blocking_count} need you`)}
       onLive={() => run(`live-${app.id}`, () => api.liveFill(app.id), 'Opening the application in Edge…')}
       onValidate={async () => { const v = await run(`validate-${app.id}`, () => api.validate(app.id)); if (v) setValidation({ ...validation, [app.id]: v }) }}
       onApplied={() => run(`status-${app.id}`, () => api.setStatus(app.id, 'APPLIED'), 'Moved to Tracker as applied')}
-      onRemove={() => confirm('Remove this application from the queue?') && run(`remove-${app.id}`, () => api.deleteApplication(app.id), 'Removed from queue')}
+      onRemove={() => confirm('Remove this application? The job stays in Find jobs.') && run(`remove-${app.id}`, () => api.deleteApplication(app.id), 'Removed')}
       onInbox={() => go('Inbox')} onOpen={() => openJob(app.job_id)} />)}</div>
-      : <Empty icon={ListChecks} title="Your queue is empty" text="Turn on Autopilot to fill it automatically, or add jobs from Discover." action={() => go('Autopilot')} actionLabel="Open Autopilot" />}</section>
+      : <Empty icon={ListChecks} title="Nothing being prepared yet" text="Autopilot fills this for you, or press “Get it ready” on any job in Find jobs." action={() => go('Autopilot')} actionLabel="Open Autopilot" />}</section>
   </>
 }
 
@@ -51,15 +51,15 @@ function QueueCard({ app, index, busy, validation, onPrepare, onLive, onValidate
     </div>
     <div className="queue-actions">
       {app.posting_url && <a className="button ghost icon-only" href={app.posting_url} target="_blank" rel="noreferrer" title="Open posting"><ExternalLink size={15} /></a>}
-      <button className="button ghost icon-only" title="Remove from queue" onClick={onRemove}><Trash2 size={15} /></button>
+      <button className="button ghost icon-only" title="Remove" onClick={onRemove}><Trash2 size={15} /></button>
       <button className="button ghost" disabled={busy === `prep-${app.id}`} onClick={onPrepare}><RefreshCw size={15} className={busy === `prep-${app.id}` ? 'spin' : ''} /> Check form</button>
-      <button className="button ghost" disabled={busy === `validate-${app.id}`} onClick={onValidate}><ShieldCheck size={16} /> Validate</button>
-      <button className={`button ${app.status === 'READY_FOR_REVIEW' ? 'primary glow' : 'ghost'}`} disabled={liveRunning || busy === `live-${app.id}`} onClick={onLive} title="Opens the real application in Edge and fills verified answers. You press submit."><MonitorPlay size={16} /> {liveRunning ? 'Filling…' : 'Fill in Edge'}</button>
+      <button className="button ghost" disabled={busy === `validate-${app.id}`} onClick={onValidate}><ShieldCheck size={16} /> Final check</button>
+      <button className={`button ${app.status === 'READY_FOR_REVIEW' ? 'primary glow' : 'ghost'}`} disabled={liveRunning || busy === `live-${app.id}`} onClick={onLive} title="Opens the real application in Edge and fills in your answers. You press submit."><MonitorPlay size={16} /> {liveRunning ? 'Filling…' : 'Fill in Edge'}</button>
       <button className="button ghost" disabled={busy === `status-${app.id}`} onClick={onApplied} title="You submitted this application yourself"><Send size={15} /> I applied</button>
     </div>
     {live?.events && live.events.length > 0 && <div className={`live-run ${live.status?.toLowerCase()}`}>{live.events.slice(-4).map((e, i) => <span key={i} className={e.step}>{liveRunning && i === Math.min(3, live.events!.length - 1) ? <span className="mini-spinner" /> : e.step === 'error' ? <AlertTriangle size={13} /> : <Check size={13} />}{e.message}</span>)}</div>}
     {fields.length > 0 && <div className="field-plan">
-      <button className="field-plan-head" onClick={() => setOpen(!open)}><b>Form plan</b><span>{SOURCE_LABEL[app.prep_source ?? ''] ?? 'Form check'}</span>{blocking > 0 && <span className="link" onClick={e => { e.stopPropagation(); onInbox() }}>Answer in Inbox →</span>}<em>{open ? 'Hide' : 'Show'}</em></button>
+      <button className="field-plan-head" onClick={() => setOpen(!open)}><b>What will be filled in</b><span>{SOURCE_LABEL[app.prep_source ?? ''] ?? 'Form check'}</span>{blocking > 0 && <span className="link" onClick={e => { e.stopPropagation(); onInbox() }}>Answer in Inbox →</span>}<em>{open ? 'Hide' : 'Show'}</em></button>
       {open && fields.map((f, i) => <div key={`${f.selector}-${i}`} className={`field-line ${f.decision.action.toLowerCase()}`}>
         {f.decision.action === 'FILL' ? <Check size={14} /> : f.decision.action === 'SKIP' ? <MinusCircle size={14} /> : <Pause size={14} />}
         <span>{f.label}{f.required && <i>*</i>}</span>

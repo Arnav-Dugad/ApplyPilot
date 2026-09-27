@@ -20,7 +20,7 @@ export function Tracker({ data, refresh, go, openJob }: PageProps) {
     if (done && status === 'OFFER') burstConfetti()
   }
   return <>
-    <PageHeading eyebrow="Tracker" title="Every application, saved to offer" text="Move cards as you hear back. Dates are recorded in your activity log." />
+    <PageHeading eyebrow="My applications" title="Every application, from sent to offer" text="Move a card when you hear back. If you connect your email in Settings, ApplyPilot can move them for you." />
     {data.applications.length ? <div className="board">{COLUMNS.map(([title, statuses]) => {
       const apps = data.applications.filter(a => statuses.includes(a.status))
       return <section key={title} className="board-column"><header><b>{title}</b><em>{apps.length}</em></header>
@@ -41,6 +41,6 @@ export function Tracker({ data, refresh, go, openJob }: PageProps) {
         </article>)}
         {!apps.length && <p className="board-empty">Nothing here yet</p>}
       </section>
-    })}</div> : <section className="panel"><Empty icon={Gauge} title="Nothing to track yet" text="Queue a job from Discover. Once you apply, mark it applied and it moves here." action={() => go('Discover')} actionLabel="Find jobs" /></section>}
+    })}</div> : <section className="panel"><Empty icon={Gauge} title="Nothing to track yet" text="Once you apply to a job, press “I applied” and it shows up here." action={() => go('Discover')} actionLabel="Find jobs" /></section>}
   </>
 }

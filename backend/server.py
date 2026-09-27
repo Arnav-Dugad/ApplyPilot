@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, ai, maintenance, service, shell, updater
+from . import __version__, ai, github_import, maintenance, service, shell, updater
 from .automation import pre_submission_validate
 from .database import AUTOPILOT_DEFAULTS, ROOT, SETTING_DEFAULTS, data_dir, now
 from .job_parser import import_url
@@ -59,7 +59,7 @@ def _save_answer(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _settings(body: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot", "desktop", "updates", "base_currency", "whats_new_pending"}
+    allowed = {"strict_accuracy_mode", "dry_run", "actual_submission_enabled", "automation_mode", "ollama", "first_run_complete", "autopilot", "desktop", "updates", "base_currency", "whats_new_pending", "sources", "tour_done"}
     for key, value in body.items():
         if key not in allowed:
             continue
@@ -72,6 +72,11 @@ def _settings(body: dict[str, Any]) -> dict[str, Any]:
                 shell.set_start_with_windows(value["start_with_windows"])
         if key == "updates":
             value = {**SETTING_DEFAULTS["updates"], **(DB.setting("updates") or {}), **{k: bool(v) for k, v in dict(value).items() if k in SETTING_DEFAULTS["updates"]}}
+        if key == "tour_done":
+            value = bool(value)
+        if key == "sources":
+            from .sources import SOURCES
+            value = {**{k: True for k in SOURCES}, **(DB.setting("sources") or {}), **{k: bool(v) for k, v in dict(value).items() if k in SOURCES}}
         if key == "base_currency":
             from .offers import CURRENCIES
             if value not in CURRENCIES:
@@ -188,6 +193,8 @@ GET_ROUTES: list[tuple[str, Callable[..., Any]]] = [
     (r"/api/email/events", lambda _b: service.email_events()),
     (r"/api/backups", lambda _b: maintenance.list_backups(DB)),
     (r"/api/update", lambda _b: updater.state()),
+    (r"/api/sources", lambda _b: service.sources_state()),
+    (r"/api/github/repos", lambda b: github_import.repositories(str(b.get("user") or ""))),
 ]
 
 POST_ROUTES: list[tuple[str, Callable[..., Any], int]] = [
@@ -237,6 +244,8 @@ POST_ROUTES: list[tuple[str, Callable[..., Any], int]] = [
     (r"/api/update/install", lambda _b: updater.install(relaunch=True), 202),
     (r"/api/update/postpone", lambda _b: updater.postpone(), 200),
     (r"/api/app/show", lambda _b: (shell.call("show"), {"ok": True})[-1], 200),
+    (r"/api/github/project", lambda b: github_import.project(str(b.get("link") or "")), 200),
+    (r"/api/github/import", lambda b: service.import_github_projects([str(x) for x in b.get("links") or []]), 201),
 ]
 
 

@@ -4,8 +4,15 @@ import { ScoreRing } from './motion'
 import type { Activity, Bootstrap, EligibilityResult, Job } from './types'
 
 export type Page = 'Home' | 'Autopilot' | 'Inbox' | 'Discover' | 'Queue' | 'Tracker' | 'Insights' | 'Companies' | 'Calendar' | 'Offers' | 'CV Library' | 'Profile' | 'Answer Vault' | 'Activity' | 'Settings'
+/** What each page is called on screen. The keys stay stable; the names are plain words. */
+export const PAGE_NAMES: Record<Page, string> = {
+  Home: 'Today', Autopilot: 'Autopilot', Inbox: 'Inbox', Discover: 'Find jobs', Queue: 'Ready to apply', Tracker: 'My applications', Insights: 'Insights',
+  Companies: 'Companies', Calendar: 'Calendar', Offers: 'Offers', 'CV Library': 'My CVs', Profile: 'My profile', 'Answer Vault': 'Saved answers', Activity: 'History', Settings: 'Settings',
+}
 export type PageProps = { data: Bootstrap; refresh: () => Promise<void>; go: (page: Page) => void; openJob: (id: string) => void; ask: (query: string) => void }
 export type Tone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
+/** Where a job was found, in words people know. */
+export const SOURCE_NAMES: Record<string, string> = { SIMPLIFY: 'the Simplify internship list', THE_MUSE: 'The Muse', ARBEITNOW: 'Arbeitnow', HIMALAYAS: 'Himalayas', HN: 'the Hacker News hiring thread', JOBICY: 'Jobicy', REMOTIVE: 'Remotive', MANUAL: 'you (added by hand)' }
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {
   return <span className={`badge ${tone}`}>{children}</span>
@@ -29,7 +36,7 @@ export function JobRow({ job, onClick }: { job: Job; onClick?: () => void }) {
   return <div className={`job-row ${onClick ? 'clickable' : ''}`} onClick={onClick}>
     <ScoreRing score={job.score?.score} size={38} />
     <div><b>{job.role || 'Role needs review'}</b><span>{job.company || 'Company unknown'} · {job.location || 'Location unknown'}</span></div>
-    <div className="tags">{job.eligibility_result ? <Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge> : <Badge>Not analyzed</Badge>}<Badge tone="accent">{job.application_platform || 'GENERIC'}</Badge></div>
+    <div className="tags">{job.eligibility_result ? <Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge> : <Badge>Not checked</Badge>}{job.tags?.filter(t => t.tone === 'good').slice(0, 1).map(t => <Badge key={t.label} tone="good">{t.label}</Badge>)}</div>
     <ChevronRight size={18} />
   </div>
 }
@@ -44,15 +51,23 @@ export function ActivityList({ items, detailed }: { items: Activity[]; detailed?
   </div>)}</div>
 }
 
+// Plain words for every eligibility result, with the order jobs are ranked in.
 const ELIGIBILITY: Record<EligibilityResult, [string, Tone, number]> = {
-  ELIGIBLE: ['Eligible', 'good', 0], LIKELY_ELIGIBLE: ['Likely eligible', 'good', 1], NEEDS_INFORMATION: ['Needs info', 'warn', 2], INELIGIBLE: ['Ineligible', 'bad', 4],
+  ELIGIBLE: ['You qualify', 'good', 0], LIKELY_ELIGIBLE: ['Good fit', 'good', 1], VISA_NEEDED: ['Needs a visa', 'accent', 2], NEEDS_INFORMATION: ['Needs your answer', 'warn', 2.5], INELIGIBLE: ['Not a fit', 'bad', 4],
 }
-export const eligibilityLabel = (r?: EligibilityResult | null) => r ? ELIGIBILITY[r]?.[0] ?? r : 'Not analyzed'
+export const ELIGIBILITY_HELP: Record<EligibilityResult, string> = {
+  ELIGIBLE: 'Everything the posting asks for matches your profile.',
+  LIKELY_ELIGIBLE: 'You meet the must-haves. A skill or a nice-to-have is missing.',
+  VISA_NEEDED: 'You fit the job, but you would need a work visa for that country.',
+  NEEDS_INFORMATION: 'ApplyPilot needs one more answer from you to decide.',
+  INELIGIBLE: 'Something in the posting rules you out, like years of experience or citizenship.',
+}
+export const eligibilityLabel = (r?: EligibilityResult | null) => r ? ELIGIBILITY[r]?.[0] ?? r : 'Not checked'
 export const eligibilityTone = (r?: EligibilityResult | null): Tone => r ? ELIGIBILITY[r]?.[1] ?? 'neutral' : 'neutral'
 export const eligibilityRank = (job: Job) => (job.eligibility_result ? ELIGIBILITY[job.eligibility_result]?.[2] ?? 3 : 3) - (job.score?.score ?? job.eligibility_match?.required_coverage ?? 0) / 1000
 
 export const STATUS_LABELS: Record<string, string> = {
-  QUEUED: 'Queued', NEEDS_INFO: 'Needs info', WAITING_FOR_USER: 'Waiting for you', READY_FOR_REVIEW: 'Ready for review',
+  QUEUED: 'Queued', NEEDS_INFO: 'Needs your answer', WAITING_FOR_USER: 'Waiting for you', READY_FOR_REVIEW: 'Ready for review',
   APPLIED: 'Applied', SUBMITTED: 'Applied', INTERVIEWING: 'Interviewing', OFFER: 'Offer', REJECTED: 'Rejected', WITHDRAWN: 'Withdrawn',
 }
 export const ACTIVE_STATUSES = ['QUEUED', 'NEEDS_INFO', 'WAITING_FOR_USER', 'READY_FOR_REVIEW']

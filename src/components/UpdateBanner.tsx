@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Download, Github, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { api } from '../api'
 import type { UpdateState } from '../types'
 import { useNotify } from '../ui'
@@ -29,16 +29,19 @@ export function UpdateBanner({ update, refresh, openNotes }: { update?: UpdateSt
     try { await fn(); await refresh(); if (success) notify(success) } catch (e) { notify(e instanceof Error ? e.message : 'Update failed', 'bad') }
   }
   const installable = update.mode === 'installer'
+  // Between pressing Update and the first byte, GitHub is resolving the download: show that honestly instead of "0%".
+  const connecting = update.status === 'downloading' && !update.downloaded
 
-  return <div className={`update-banner ${update.status}`} role="status" aria-live="polite">
-    <div className="update-icon">{update.status === 'verifying' ? <ShieldCheck /> : update.status === 'installing' ? <RefreshCw className="spin" /> : update.status === 'ready' ? <Sparkles /> : <Download />}</div>
+  return <div className={`update-banner ${update.status} ${connecting ? 'connecting' : ''}`} role="status" aria-live="polite">
+    <div className="update-icon">{connecting ? <span className="gh-orbit"><Github /></span> : update.status === 'verifying' ? <ShieldCheck /> : update.status === 'installing' ? <RefreshCw className="spin" /> : update.status === 'ready' ? <Sparkles /> : <Download />}</div>
     <div className="update-body">
       {update.status === 'available' && <><b>ApplyPilot {update.latest} is available</b><span>{installable ? 'Download it now — it installs in the background.' : update.mode === 'portable' ? 'You’re using the portable version: download the new zip from GitHub.' : 'Running from source: pull the latest code to update.'}</span></>}
-      {update.status === 'downloading' && <><b>Updating to ApplyPilot {update.latest} · {pct}%</b><span>{formatBytes(update.downloaded)} of {formatBytes(update.total)}{update.speed ? ` · ${formatBytes(update.speed)}/s` : ''}{update.eta != null ? ` · ${formatEta(update.eta)}` : ''}</span></>}
+      {connecting && <><b>Connecting to GitHub…</b><span>Starting the download of ApplyPilot {update.latest}{update.total ? ` (${formatBytes(update.total)})` : ''}. This can take a few seconds.</span></>}
+      {update.status === 'downloading' && !connecting && <><b>Updating to ApplyPilot {update.latest} · {pct}%</b><span>{formatBytes(update.downloaded)} of {formatBytes(update.total)}{update.speed ? ` · ${formatBytes(update.speed)}/s` : ''}{update.eta != null ? ` · ${formatEta(update.eta)}` : ''}</span></>}
       {update.status === 'verifying' && <><b>Verifying ApplyPilot {update.latest}</b><span>Checking the download matches the release GitHub published…</span></>}
       {update.status === 'ready' && <><b>ApplyPilot {update.latest} is ready</b><span>{update.postponed ? 'It will install when you quit ApplyPilot.' : countdown != null ? `Installing and restarting in ${countdown}s — your data stays exactly as it is.` : 'Verified and ready to install.'}</span></>}
       {update.status === 'installing' && <><b>Installing ApplyPilot {update.latest}</b><span>ApplyPilot will close and reopen in a few seconds.</span></>}
-      {(update.status === 'downloading' || update.status === 'verifying' || update.status === 'installing') && <div className="update-progress"><i style={{ width: `${update.status === 'downloading' ? pct : 100}%` }} className={update.status !== 'downloading' ? 'indeterminate' : ''} /></div>}
+      {(update.status === 'downloading' || update.status === 'verifying' || update.status === 'installing') && <div className="update-progress"><i style={{ width: `${update.status === 'downloading' && !connecting ? pct : 100}%` }} className={update.status !== 'downloading' || connecting ? 'indeterminate' : ''} /></div>}
     </div>
     <div className="update-actions">
       {update.notes && <button className="button ghost" onClick={openNotes}>What’s new</button>}

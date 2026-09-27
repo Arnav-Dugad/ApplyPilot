@@ -11,9 +11,10 @@ describe('ui helpers', () => {
       job({ id: 'unanalyzed' }),
       job({ id: 'eligible-low', eligibility_result: 'ELIGIBLE', eligibility_match: { strong: [], partial: [], missing: [], required_coverage: 40 } }),
       job({ id: 'needs-info', eligibility_result: 'NEEDS_INFORMATION' }),
+      job({ id: 'visa', eligibility_result: 'VISA_NEEDED' }),
       job({ id: 'eligible-high', eligibility_result: 'ELIGIBLE', eligibility_match: { strong: [], partial: [], missing: [], required_coverage: 90 } }),
     ]
-    expect(jobs.sort((a, b) => eligibilityRank(a) - eligibilityRank(b)).map(j => j.id)).toEqual(['eligible-high', 'eligible-low', 'needs-info', 'unanalyzed', 'ineligible'])
+    expect(jobs.sort((a, b) => eligibilityRank(a) - eligibilityRank(b)).map(j => j.id)).toEqual(['eligible-high', 'eligible-low', 'visa', 'needs-info', 'unanalyzed', 'ineligible'])
   })
 
   it('never renders a missing value as if it were an answer', () => {
@@ -24,8 +25,10 @@ describe('ui helpers', () => {
   })
 
   it('labels statuses and eligibility for people, not enums', () => {
-    expect(eligibilityLabel('NEEDS_INFORMATION')).toBe('Needs info')
-    expect(eligibilityLabel(undefined)).toBe('Not analyzed')
+    expect(eligibilityLabel('NEEDS_INFORMATION')).toBe('Needs your answer')
+    expect(eligibilityLabel('VISA_NEEDED')).toBe('Needs a visa')
+    expect(eligibilityLabel('INELIGIBLE')).toBe('Not a fit')
+    expect(eligibilityLabel(undefined)).toBe('Not checked')
     expect(statusTone('WAITING_FOR_USER')).toBe('warn')
     expect(statusTone('OFFER')).toBe('good')
   })
