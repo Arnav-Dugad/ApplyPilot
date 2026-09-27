@@ -39,6 +39,15 @@ COUNTRY_NAMES = {
     "LB": ("lebanon",), "LT": ("lithuania",), "LU": ("luxembourg",), "LV": ("latvia",), "MT": ("malta",), "MX": ("mexico",),
     "MY": ("malaysia",), "PH": ("philippines",), "PK": ("pakistan",), "RO": ("romania",), "SI": ("slovenia",), "SK": ("slovakia",),
     "TR": ("turkey", "turkiye"), "TW": ("taiwan",), "VN": ("vietnam",), "ZA": ("south africa",), "TH": ("thailand",), "NG": ("nigeria",),
+    "NP": ("nepal",), "BD": ("bangladesh",), "LK": ("sri lanka",), "BT": ("bhutan",), "MV": ("maldives",), "AF": ("afghanistan",), "IR": ("iran",),
+    "IQ": ("iraq",), "KZ": ("kazakhstan",), "UZ": ("uzbekistan",), "UA": ("ukraine",), "RU": ("russia", "russian federation"), "BY": ("belarus",),
+    "RS": ("serbia",), "BA": ("bosnia and herzegovina", "bosnia"), "AL": ("albania",), "MK": ("north macedonia", "macedonia"), "ME": ("montenegro",),
+    "MD": ("moldova",), "GE": ("georgia",), "AM": ("armenia",), "AZ": ("azerbaijan",), "LI": ("liechtenstein",), "MC": ("monaco",),
+    "AR": ("argentina",), "CL": ("chile",), "CO": ("colombia",), "PE": ("peru",), "VE": ("venezuela",), "EC": ("ecuador",), "UY": ("uruguay",),
+    "PY": ("paraguay",), "BO": ("bolivia",), "CR": ("costa rica",), "PA": ("panama",), "GT": ("guatemala",), "DO": ("dominican republic",),
+    "JM": ("jamaica",), "KE": ("kenya",), "TZ": ("tanzania",), "UG": ("uganda",), "ET": ("ethiopia",), "GH": ("ghana",), "MA": ("morocco",),
+    "DZ": ("algeria",), "TN": ("tunisia",), "RW": ("rwanda",), "SN": ("senegal",), "CM": ("cameroon",), "ZW": ("zimbabwe",), "ZM": ("zambia",),
+    "MU": ("mauritius",), "KH": ("cambodia",), "MM": ("myanmar",), "MN": ("mongolia",), "MO": ("macau", "macao")
 }
 _LOOKUP = {name: code for code, names in COUNTRY_NAMES.items() for name in names}
 

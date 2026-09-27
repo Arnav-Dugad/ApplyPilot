@@ -36,7 +36,7 @@ export function TailorModal({ jobId, draftId, useAI, onClose, onDone }: { jobId?
       <button className="button ghost" disabled={busy} onClick={async () => { await api.saveDraft(result.id, text, false); notify('Saved as a draft in your Inbox'); onClose() }}>Save for later</button>
       <button className="button primary" disabled={busy} onClick={approve}>{busy ? <><Wand2 size={15} className="spin" /> Creating PDF…</> : <><Check size={15} /> Approve & create PDF</>}</button></>}>
     {error ? <div className="error-banner"><AlertTriangle /><span>{error}</span></div> : !result ? <><Skeleton lines={3} /><Skeleton lines={8} /></> : <>
-      {flagged && <div className="attention banner"><AlertTriangle /><div><b>Check these before approving</b><p>They aren't in your original CV or verified profile: {[...flags!.skills, ...flags!.numbers].join(', ')}. ApplyPilot won't approve a CV that claims them.</p></div></div>}
+      {flagged && <div className="attention banner"><AlertTriangle /><div><b>Check these before approving</b><p>They aren't in your original CV or your profile: {[...flags!.skills, ...flags!.numbers].join(', ')}. ApplyPilot won't approve a CV that claims them.</p></div></div>}
       {mode === 'diff' ? <WordDiff before={result.original} after={text} /> : <textarea className="cv-editor" value={text} onChange={e => setText(e.target.value)} />}
       <p className="muted small tailor-note"><FileText size={13} /> Green lines are the tailored version; struck-through lines are what they replace. Nothing about you is ever invented.</p>
     </>}

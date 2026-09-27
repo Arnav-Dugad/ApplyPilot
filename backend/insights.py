@@ -125,8 +125,10 @@ def coach(jobs: list[dict[str, Any]], facts: list[dict[str, Any]], min_score: in
 
 STRENGTH_ITEMS = [
     ("personal", "full_name", "Legal name", 10), ("contact", "email", "Email", 8), ("contact", "phone", "Phone", 7), ("contact", "linkedin", "LinkedIn", 6),
-    ("education", "university", "University", 8), ("education", "degree", "Degree", 7), ("education", "graduation_date", "Graduation date", 8),
-    ("preferences", "locations", "Preferred locations", 6), ("languages", "spoken", "Languages", 5), ("contact", "location", "Current city", 4),
+    ("education", "university", "University", 8), ("education", "degree", "Field of study", 5), ("education", "degree_name", "Degree", 6), ("education", "graduation_date", "Graduation date", 8),
+    ("education", "year_of_study", "Year of study", 4), ("education", "cgpa", "CGPA", 4), ("citizenship", "countries", "Citizenship", 10), ("contact", "github", "GitHub", 4),
+    ("preferences", "locations", "Places you'd work", 6), ("preferences", "roles", "Kinds of roles", 4), ("preferences", "availability", "When you're free", 4),
+    ("languages", "spoken", "Languages", 5), ("contact", "location", "Current city", 4),
 ]
 
 
@@ -135,7 +137,7 @@ def profile_strength(facts: list[dict[str, Any]], approved_cv: bool) -> dict[str
     skills = next((f.get("value") for f in facts if f["category"] == "skills" and f.get("status") == "VERIFIED" and isinstance(f.get("value"), list)), []) or []
     items = [{"label": label, "points": pts, "done": (cat, key) in verified} for cat, key, label, pts in STRENGTH_ITEMS]
     items.append({"label": "5+ verified skills", "points": 10, "done": len(skills) >= 5})
-    items.append({"label": "Work authorization for a country", "points": 8, "done": any(f["category"] == "work_authorization" and f.get("status") == "VERIFIED" for f in facts)})
+    items.append({"label": "Your experience (or “none yet”)", "points": 6, "done": any(f["category"] == "experience" and f.get("status") == "VERIFIED" for f in facts)})
     items.append({"label": "A project", "points": 5, "done": any(f["category"] == "projects" and f.get("status") == "VERIFIED" for f in facts)})
     items.append({"label": "Approved CV", "points": 8, "done": approved_cv})
     total = sum(i["points"] for i in items)
@@ -241,7 +243,7 @@ def health(watchlist: list[dict[str, Any]], jobs: list[dict[str, Any]], apps: li
         issues.append({"level": "info", "title": f"{len(old)} fact{'s' if len(old) > 1 else ''} not confirmed in over a year", "detail": ", ".join(f["fact_key"].replace("_", " ") for f in old[:4]), "page": "Profile"})
     expired = [a for a in answers if a.get("status") in {"EXPIRED", "UNVERIFIED"}]
     if expired:
-        issues.append({"level": "info", "title": f"{len(expired)} Answer Vault answer{'s' if len(expired) > 1 else ''} not usable", "detail": "Expired or never approved.", "page": "Answer Vault"})
+        issues.append({"level": "info", "title": f"{len(expired)} saved answer{'s' if len(expired) > 1 else ''} not in use", "detail": "Expired or never approved.", "page": "Answer Vault"})
     if not has_cv:
         issues.append({"level": "warn", "title": "No approved CV", "detail": "Résumé fields pause until you approve one.", "page": "CV Library"})
     if email.get("enabled") and email.get("last_error"):
@@ -258,7 +260,8 @@ def today(jobs: list[dict[str, Any]], apps: list[dict[str, Any]], inbox: dict[st
         days = _days_until(job.get("deadline"))
         if app["status"] in {"READY_FOR_REVIEW", "WAITING_FOR_USER", "QUEUED", "NEEDS_INFO"} and days is not None and 0 <= days <= 3:
             actions.append({"value": 100 - days * 10, "kind": "DEADLINE", "title": f"{job.get('company')} closes in {max(1, round(days * 24))}h", "detail": job.get("role"), "page": "Queue", "job_id": job.get("id")})
-    ready = [a for a in apps if a["status"] == "READY_FOR_REVIEW"]
+    # Never suggest submitting something the posting now rules you out of.
+    ready = [a for a in apps if a["status"] == "READY_FOR_REVIEW" and by_id.get(a["job_id"], {}).get("eligibility_result") != "INELIGIBLE"]
     for app in ready[:3]:
         actions.append({"value": 80 + (by_id.get(app["job_id"], {}).get("score") or {}).get("score", 0) / 10, "kind": "SUBMIT", "title": f"Submit {app.get('role')}", "detail": f"{app.get('company')} · every field is filled", "page": "Queue", "job_id": app["job_id"]})
     required = [q for q in inbox.get("questions", []) if q.get("required")]

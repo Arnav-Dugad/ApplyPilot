@@ -86,6 +86,8 @@ def find_skills(text: str) -> list[str]:
         lowered = token.lower()
         if lowered in _AMBIGUOUS and not _exact_mention(token):
             continue
+        if lowered == "spring" and re.match(r"(?i)\s*('?\d{2,4}|semester|term|break|quarter|session|internship|intake|co-?op|and summer|/|or )", text[match.end():match.end() + 14]):
+            continue  # "Spring 2027" is a season, not the Java framework
         if lowered == "go" and not re.search(r"(?i)\bgo(lang)?\b\s*(,|and|or|/|\)|developer|programming|language)", text[match.start():match.end() + 14]):
             continue
         skill = _ALIASES[lowered]
@@ -101,3 +103,19 @@ def _exact_mention(token: str) -> bool:
 
 def related_credit(skill: str, known: set[str]) -> bool:
     return any(r in known for r in RELATED.get(skill, ()))
+
+
+# How each skill is written on a CV. Anything not listed is title-cased.
+DISPLAY = {
+    ".net": ".NET", "aws": "AWS", "c#": "C#", "c++": "C++", "ci/cd": "CI/CD", "css": "CSS", "dbt": "dbt", "etl": "ETL", "fastapi": "FastAPI", "gcp": "Google Cloud",
+    "git": "Git", "graphql": "GraphQL", "grpc": "gRPC", "html": "HTML", "ios": "iOS", "javascript": "JavaScript", "llms": "LLMs", "matlab": "MATLAB", "mlops": "MLOps",
+    "mongodb": "MongoDB", "mysql": "MySQL", "next.js": "Next.js", "nlp": "NLP", "node.js": "Node.js", "numpy": "NumPy", "oop": "OOP", "pandas": "pandas", "php": "PHP",
+    "postgresql": "PostgreSQL", "power bi": "Power BI", "pytorch": "PyTorch", "rest api": "REST APIs", "scikit-learn": "scikit-learn", "sql": "SQL", "sqlite": "SQLite",
+    "tensorflow": "TensorFlow", "typescript": "TypeScript", "verilog": "Verilog", "vhdl": "VHDL", "websockets": "WebSockets", "dynamodb": "DynamoDB", "bigquery": "BigQuery",
+    "elasticsearch": "Elasticsearch", "hugging face": "Hugging Face", "react native": "React Native", "r": "R", "c": "C", "go": "Go", "redux": "Redux", "rails": "Rails",
+}
+
+
+def display(skill: str) -> str:
+    key = canonical(skill)
+    return DISPLAY.get(key) or " ".join(w if w.isupper() else w[:1].upper() + w[1:] for w in key.split())

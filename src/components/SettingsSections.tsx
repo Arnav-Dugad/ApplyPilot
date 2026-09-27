@@ -109,7 +109,7 @@ function ResetModal({ close, done }: { close: () => void; done: (result: { backu
   }
   return <Modal title="Reset ApplyPilot" subtitle="This can’t be undone without a backup." onClose={close}
     footer={<><button className="button ghost" onClick={close}>Cancel</button><button className="button danger" disabled={typed !== 'RESET' || busy} onClick={reset}>{busy ? 'Resetting…' : 'Erase everything'}</button></>}>
-    <div className="reset-list"><b>This erases:</b><ul><li>Your verified profile, languages, and projects</li><li>Every job, application, and Tracker card</li><li>Answer Vault answers, drafts, and offers</li><li>Uploaded and tailored CVs</li><li>Followed companies, connections, and all settings</li></ul></div>
+    <div className="reset-list"><b>This erases:</b><ul><li>Your profile, languages, and projects</li><li>Every job, application, and Tracker card</li><li>Saved answers, drafts, and offers</li><li>Uploaded and tailored CVs</li><li>Followed companies, connections, and all settings</li></ul></div>
     <label className="checkbox-line"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)} /> Save a backup first (recommended)</label>
     <label className="confirm-type"><span>Type <b>RESET</b> to confirm</span><input value={typed} onChange={e => setTyped(e.target.value)} autoFocus placeholder="RESET" /></label>
   </Modal>

@@ -30,6 +30,8 @@ COLUMN_MIGRATIONS = [
     ("applications", "status_note", "TEXT"),
     ("applications", "followed_up_at", "TEXT"),
     ("drafts", "application_id", "TEXT"),
+    ("jobs", "requirements_json", "TEXT"),
+    ("jobs", "listing_json", "TEXT"),
 ]
 
 AUTOPILOT_DEFAULTS = {
@@ -42,6 +44,7 @@ AUTOPILOT_DEFAULTS = {
     "internships_only": True,
     "ai_summaries": True,
     "ai_cover_letters": False,
+    "worldwide": True,
 }
 
 
@@ -53,12 +56,16 @@ SETTING_DEFAULTS: dict[str, Any] = {
     "ollama": {"provider": "OFF", "endpoint": "http://localhost:11434", "model": None},
     "first_run_complete": False,
     "autopilot": AUTOPILOT_DEFAULTS,
+    "sources": {"SIMPLIFY": True, "THE_MUSE": True, "ARBEITNOW": True, "HIMALAYAS": True, "HN": True, "JOBICY": True, "REMOTIVE": True},
+    "source_status": {},
     "updates": {"auto_install": True},
     "desktop": {"close_to_tray": True, "start_with_windows": False},
     "email_sync": {"enabled": False, "provider": "GMAIL", "host": "imap.gmail.com", "port": 993, "address": "", "secret": None, "last_sync": None, "last_error": None},
     "base_currency": "USD",
     "last_version": None,
     "whats_new_pending": None,
+    "updated_from": None,
+    "tour_done": False,
 }
 
 
@@ -86,6 +93,15 @@ def _rebuild_drafts_without_kind_check(conn: sqlite3.Connection) -> None:
       id TEXT PRIMARY KEY, platform TEXT NOT NULL, slug TEXT NOT NULL, company TEXT NOT NULL, created_at TEXT NOT NULL, last_scanned_at TEXT, last_status TEXT,
       jobs_seen INTEGER NOT NULL DEFAULT 0, internships_seen INTEGER NOT NULL DEFAULT 0, UNIQUE(platform, slug))""",
              "id,platform,slug,company,created_at,last_scanned_at,last_status,jobs_seen,internships_seen")
+
+
+def _rebuild_results_without_result_check(conn: sqlite3.Connection) -> None:
+    """0.5 adds the VISA_NEEDED result, which the 0.4 CHECK constraint rejects. Runs after column migrations."""
+    _rebuild(conn, "eligibility_results", "CHECK(result IN", """CREATE TABLE eligibility_results (
+      id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, result TEXT NOT NULL, checks_json TEXT NOT NULL, match_json TEXT NOT NULL,
+      recommended_cv_id TEXT, evaluated_at TEXT NOT NULL, score_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE, FOREIGN KEY(recommended_cv_id) REFERENCES cvs(id))""",
+             "id,job_id,result,checks_json,match_json,recommended_cv_id,evaluated_at,score_json")
 
 
 def data_dir() -> Path:
@@ -131,6 +147,7 @@ class Database:
             for table, column, ddl in COLUMN_MIGRATIONS:
                 if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            _rebuild_results_without_result_check(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint ON jobs(fingerprint)")
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)", (now(),))
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, ?)", (now(),))

@@ -1,4 +1,4 @@
-import type { AIStatus, AISummary, Analysis, Backup, Bootstrap, CalendarData, CoachTip, CompanyDetail, CompanySummary, Draft, EmailEvent, Fact, Job, JobDetail, PrepPack, SearchResult, TailorResult, UpdateState, Validation } from './types'
+import type { AIStatus, AISummary, Analysis, Backup, Bootstrap, CalendarData, CoachTip, CompanyDetail, CompanySummary, Draft, EmailEvent, Fact, GitHubProject, GitHubRepo, Job, JobDetail, PrepPack, SearchResult, SourceInfo, TailorResult, UpdateState, Validation } from './types'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } })
@@ -76,6 +76,10 @@ export const api = {
   downloadUpdate: () => post<UpdateState>('/api/update/download'),
   installUpdate: () => post<UpdateState>('/api/update/install'),
   postponeUpdate: () => post<UpdateState>('/api/update/postpone'),
+  sources: () => request<{ sources: SourceInfo[]; worldwide: boolean }>('/api/sources'),
+  githubRepos: (user: string) => request<GitHubRepo[]>(`/api/github/repos?user=${encodeURIComponent(user)}`),
+  githubProject: (link: string) => post<GitHubProject>('/api/github/project', { link }),
+  githubImport: (links: string[]) => post<{ saved: GitHubProject[]; errors: { link: string; error: string }[]; new_skills: string[] }>('/api/github/import', { links }),
 }
 
 export function readFileBase64(file: File): Promise<string> {

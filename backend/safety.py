@@ -30,13 +30,25 @@ PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("WORK_AUTHORIZATION", (r"authori[sz]ed to work", r"right to work", r"work permit", r"eligible to work", r"legally (able|permitted) to work")),
     # Visa sponsorship only: "sponsored conferences" is not about your visa.
     ("SPONSORSHIP", (r"\bsponsorship\b", r"\bsponsor (you|me|your|a|an|visa|work|employment)", r"visa sponsor", r"immigration support", r"visa support")),
+    # "Are you a U.S. citizen?" (yes/no, answered from your citizenship) or "Country of citizenship" (text).
+    ("CITIZENSHIP", (r"citizenship", r"\bcitizens?\b", r"\bnationality\b", r"\bnational of\b")),
     ("RELOCATION_ASSISTANCE", (r"relocation (assistance|package|support|benefit|stipend|reimbursement)", r"(assistance|help|support) (with|to|for) relocat", r"require relocation")),
     ("RELOCATION", (r"relocat",)),
     ("SALARY", (r"salary", r"compensation", r"pay expectation")),
+    # Only the general question; "years of experience with Python" is skill-specific and stays unknown.
+    ("YEARS_OF_EXPERIENCE", (r"^(total |overall )?(number of )?years of (professional |relevant |work |full time |industry )?experience$",
+                             r"^how many years of (professional |relevant |work |full time |industry )?(work )?experience (do you have )?(in total )?$")),
+    ("START_DATE", (r"earliest (possible )?start", r"(available|availability) (to|for) start", r"when (can|could|would) you (start|begin)", r"^(desired |preferred |expected )?start date$", r"^date (you are |you re )?available")),
     ("DEMOGRAPHIC", (r"gender", r"ethnicity", r"\brace\b", r"disability", r"veteran", r"sexual orientation", r"pronoun", r"hispanic")),
     ("LEGAL", (r"criminal", r"declaration", r"conflict of interest", r"restrictive covenant", r"background check", r"non compete", r"i certify", r"i agree", r"consent")),
     ("CUSTOM", (r"why (do you|are you|this|us|join|should)", r"tell us", r"\bdescribe\b", r"share with us", r"what (excites|interests|motivates)", r"what best describes", r"\bexplain\b")),
     ("GRADUATION_DATE", (r"graduat", r"completion date")),
+    ("ENROLLED", (r"currently enrolled", r"currently (a )?(student|pursuing|attending|studying)", r"are you (a )?(current|full time|part time|university|college) student", r"\benrolled (in|at|as)\b")),
+    ("YEAR_OF_STUDY", (r"year of study", r"current year (in|of|at) (school|university|college|study|studies|your program|your degree)", r"academic (year|standing|level)", r"class standing",
+                       r"what year are you", r"year in (school|college|university)", r"current (study )?year$", r"^year of (school|university|college)")),
+    ("DEGREE_LEVEL", (r"level of (education|study|degree)", r"education level", r"degree (type|level|name|pursuing)", r"type of degree", r"highest (degree|level)",
+                      r"^degree$", r"^current degree$", r"what degree", r"degree (you are|are you) (pursuing|studying|currently)", r"^(current |most recent )?degree program$")),
+    ("MAJOR", (r"\bmajor\b", r"field of study", r"area of study", r"\bdiscipline\b", r"course of study", r"concentration", r"specialization", r"specialisation")),
     ("EDUCATION", (r"university", r"college", r"school", r"degree", r"education", r"institution")),
     ("POSTAL_CODE", (r"postal", r"zip", r"post code", r"postcode", r"pin ?code")),
     ("ADDRESS", (r"address",)),
@@ -49,7 +61,8 @@ def normalize(text: str) -> str:
 
 
 # Facts that hold text (a university, a phone number). A yes/no question can never be answered with one.
-TEXT_FACTS = {"NAME", "FIRST_NAME", "LAST_NAME", "EMAIL", "PHONE", "ADDRESS", "POSTAL_CODE", "LOCATION", "LINKEDIN", "GITHUB", "WEBSITE", "EDUCATION", "GRADUATION_DATE", "SALARY"}
+TEXT_FACTS = {"NAME", "FIRST_NAME", "LAST_NAME", "EMAIL", "PHONE", "ADDRESS", "POSTAL_CODE", "LOCATION", "LINKEDIN", "GITHUB", "WEBSITE", "EDUCATION", "GRADUATION_DATE", "SALARY",
+              "MAJOR", "DEGREE_LEVEL", "YEAR_OF_STUDY", "YEARS_OF_EXPERIENCE", "START_DATE"}
 YES_NO_START = re.compile(r"^(are|is|do|does|did|have|has|had|will|would|can|could|were|was|should|may) (you|your|the|this|there)\b")
 YES_NO_OPTIONS = {"yes", "no", "n a", "na", "not applicable", "prefer not to say", "i don t know", "unsure", "maybe"}
 
@@ -61,8 +74,15 @@ def is_yes_no_question(label: str, options: list[str] | None = None) -> bool:
     return bool(YES_NO_START.match(text))
 
 
+# "Are you currently enrolled in a university?" is answerable from your profile; any extra detail
+# (a degree level, a subject, a school, a date) makes it a different question.
+GENERIC_ENROLLED_WORDS = {"are", "you", "currently", "enrolled", "in", "at", "as", "a", "an", "the", "student", "students", "university", "college", "school", "academic",
+                          "program", "programme", "degree", "full", "time", "accredited", "higher", "education", "institution", "pursuing", "attending", "studying", "current",
+                          "seeking", "of", "or", "and", "an", "institute"}
+
+
 # A long sentence only counts as a profile field when it explicitly asks for "your <field>".
-ASKS_FOR = re.compile(r"\byour (expected |anticipated |current |full |legal |primary |personal )?(graduation|university|school|college|degree|email|e mail|phone|mobile|name|address|zip|postal|linkedin|github|website|portfolio|city|location)\b"
+ASKS_FOR = re.compile(r"\byour (expected |anticipated |current |full |legal |primary |personal |earliest )?(graduation|university|school|college|degree|email|e mail|phone|mobile|name|address|zip|postal|linkedin|github|website|portfolio|city|location|major|field of study|year of study|citizenship|nationality|start date)\b"
                       r"|\byou (will|expect to|plan to|are expected to) graduate\b|\b(when|what year|which year) (do|will) you graduate\b|\bgraduation (date|year|month|term)\b")
 
 
@@ -70,7 +90,10 @@ def classify_field(label: str, name: str = "", field_type: str = "", options: li
     haystack = normalize(f"{label} {name} {field_type}")
     text = normalize(label)
     for classification, patterns in PATTERNS:
-        if any(re.search(pattern, haystack) for pattern in patterns):
+        # Anchored patterns ("^degree$") describe the whole label, so they never see the field's name or type.
+        if any(re.search(pattern, text if pattern.startswith("^") or pattern.endswith("$") else haystack) for pattern in patterns):
+            if classification == "ENROLLED" and (not is_yes_no_question(label, options) or set(text.split()) - GENERIC_ENROLLED_WORDS):
+                return "UNKNOWN"  # "enrolled in a PhD program?" or "... in Accounting?" is about a specific degree, not just being a student
             if classification in TEXT_FACTS:
                 if is_yes_no_question(label, options):
                     return "UNKNOWN"  # "Are you eligible ... based on a degree from a U.S. institution?" is not asking for your university
@@ -90,13 +113,13 @@ class FillDecision:
 
 def decide_fill(classification: str, fact: dict[str, Any] | None, *, manual_only: bool = False, user_answer: bool = False) -> FillDecision:
     if manual_only:
-        return FillDecision("PAUSE", reason="This answer is configured as MANUAL_ONLY.")
+        return FillDecision("PAUSE", reason="You answer this one yourself — ApplyPilot never fills it in.")
     if not fact:
-        return FillDecision("PAUSE", reason="ApplyPilot doesn't have a verified answer for this question.")
+        return FillDecision("PAUSE", reason="ApplyPilot doesn't know your answer to this yet.")
     if fact.get("status") != "VERIFIED":
-        return FillDecision("PAUSE", reason=f"The matching answer is {fact.get('status', 'UNKNOWN')}.")
+        return FillDecision("PAUSE", reason=f"Your saved answer is marked {str(fact.get('status', 'UNKNOWN')).lower()}, so it isn't used until you confirm it.")
     if classification == "UNKNOWN" and not user_answer:
-        return FillDecision("PAUSE", reason="Unknown fields never receive automatic answers.")
+        return FillDecision("PAUSE", reason="ApplyPilot isn't sure what this question asks, so it leaves it for you.")
     return FillDecision("FILL", fact.get("value"), fact.get("source_label") or f"Profile → {fact.get('category')} → {fact.get('fact_key')}", fact.get("reason") or "Exact verified fact found.")
 
 

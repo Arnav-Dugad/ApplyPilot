@@ -115,6 +115,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.call("DELETE", f"/api/jobs/{job['id']}", {})[0], 404)
 
     def test_bootstrap_includes_saved_eligibility(self):
+        server.DB.execute("DELETE FROM profile_facts")  # other tests may have answered the UK already
         job = self.manual_job(company="EligCo", posting_url="https://example.com/eligco")
         self.call("POST", f"/api/jobs/{job['id']}/analyze", {})
         saved = next(j for j in self.call("GET", "/api/bootstrap")[1]["jobs"] if j["id"] == job["id"])

@@ -3,9 +3,10 @@ import { ExternalLink, Layers, Link2, PenLine, RefreshCw, Search, Sparkles, Thum
 import { api } from '../api'
 import type { EligibilityResult, Job, SearchResult } from '../types'
 import { Badge, Empty, JobRow, PageHeading, eligibilityLabel, eligibilityRank, eligibilityTone, useAction, type PageProps } from '../ui'
+import { CheckList, Tags } from '../components/Checks'
 
 type Filter = 'ALL' | 'TOP' | EligibilityResult | 'UNANALYZED'
-const FILTERS: [Filter, string][] = [['ALL', 'All'], ['TOP', 'Top matches'], ['ELIGIBLE', 'Eligible'], ['LIKELY_ELIGIBLE', 'Likely'], ['NEEDS_INFORMATION', 'Needs info'], ['INELIGIBLE', 'Ineligible'], ['UNANALYZED', 'Not analyzed']]
+const FILTERS: [Filter, string][] = [['ALL', 'All'], ['TOP', 'Best matches'], ['ELIGIBLE', 'You qualify'], ['LIKELY_ELIGIBLE', 'Good fit'], ['VISA_NEEDED', 'Needs a visa'], ['NEEDS_INFORMATION', 'Needs your answer'], ['INELIGIBLE', 'Not a fit'], ['UNANALYZED', 'Not checked']]
 const blankJob = { company: '', role: '', location: '', country: '', posting_url: '', description: '' }
 const EXAMPLES = ['backend roles with Python in Europe', 'remote ML internships', 'data analyst jobs in India or UAE', 'React frontend in the UK']
 const looksLikeUrl = (text: string) => /^https?:\/\//i.test(text.trim()) || /^[\w-]+(\.[\w-]+)+\/\S*/.test(text.trim())
@@ -52,9 +53,9 @@ export function Discover({ data, refresh, go, openJob, askQuery }: PageProps & {
   const isUrl = looksLikeUrl(input)
 
   return <>
-    <PageHeading eyebrow="Discovery" title="Find a role worth applying to" text="Paste a job link to import it, or just ask in plain English.">
+    <PageHeading eyebrow="Find jobs" title="Find an internship worth applying to" text="Every job Autopilot found, checked against your profile. Paste a job link to add one, or just ask in plain English.">
       <button className="button ghost" onClick={() => setManual(manual ? null : { ...blankJob })}><PenLine size={16} /> Add manually</button>
-      {data.jobs.length > 0 && <button className="button ghost" disabled={busy === 'analyze-all'} onClick={() => run('analyze-all', () => api.analyzeAll(), r => `Re-scored ${r.analyzed} jobs against your verified profile`)}><RefreshCw size={16} className={busy === 'analyze-all' ? 'spin' : ''} /> Re-analyze all</button>}
+      {data.jobs.length > 0 && <button className="button ghost" disabled={busy === 'analyze-all'} onClick={() => run('analyze-all', () => api.analyzeAll(), r => `Re-checked ${r.analyzed} jobs against your profile`)}><RefreshCw size={16} className={busy === 'analyze-all' ? 'spin' : ''} /> Re-check all</button>}
     </PageHeading>
     <section className={`import-bar smart ${isUrl ? 'url' : 'ask'}`}>{isUrl ? <Link2 /> : <Sparkles />}
       <input value={input} onChange={e => setInput(e.target.value)} placeholder="Paste a job link, or ask: “backend roles with Python in Europe”" onKeyDown={e => e.key === 'Enter' && submit()} />
@@ -78,18 +79,18 @@ export function Discover({ data, refresh, go, openJob, askQuery }: PageProps & {
       {search ? <div className="panel-head"><div><h2>{search.ids.length} result{search.ids.length === 1 ? '' : 's'} for “{search.query}”</h2>
         <div className="parsed">{search.parsed.roles.map(r => <span key={r} className="chip on">Role: {r}</span>)}{search.parsed.skills.map(s => <span key={s} className="chip on">Skill: {s}</span>)}{search.parsed.places.map(p => <span key={p} className="chip on">Place: {p}</span>)}{search.parsed.remote && <span className="chip on">Remote</span>}{search.parsed.keywords.map(k => <span key={k} className="chip">“{k}”</span>)}{search.semantic && <span className="chip ai">✦ semantic ranking</span>}</div></div>
         <button className="button ghost" onClick={() => { setSearch(null); setInput('') }}>Clear</button></div>
-        : <><div className="panel-head"><div><h2>Internships</h2><p>Extracted facts stay unverified until you review them. 👍/👎 teaches the ranking.</p></div><Badge>{data.jobs.length - duplicates} unique</Badge></div>
+        : <><div className="panel-head"><div><h2>Internships</h2><p>Best first. 👍 / 👎 teaches ApplyPilot what you like.</p></div><Badge>{data.jobs.length - duplicates} jobs</Badge></div>
           {data.jobs.length > 0 && <div className="toolbar"><div className="chips">{FILTERS.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}<em>{data.jobs.filter(j => matches(j, key) && !j.duplicate_of).length}</em></button>)}</div>
-            {duplicates > 0 && <button className={`chip-toggle ${showDuplicates ? 'on' : ''}`} onClick={() => setShowDuplicates(!showDuplicates)}><Layers size={13} /> {showDuplicates ? 'Hide' : 'Show'} {duplicates} duplicate{duplicates === 1 ? '' : 's'}</button>}</div>}</>}
+            {duplicates > 0 && <button className={`chip-toggle ${showDuplicates ? 'on' : ''}`} onClick={() => setShowDuplicates(!showDuplicates)}><Layers size={13} /> {showDuplicates ? 'Hide' : 'Show'} {duplicates} posted twice</button>}</div>}</>}
       {jobs.length ? <div className="job-cards stagger">{jobs.map(job => <JobCard key={job.id} job={job} queued={queued.has(job.id)} busy={busy}
         onAnalyze={() => run(`analyze-${job.id}`, () => api.analyzeJob(job.id), r => `${job.company || 'Job'}: ${eligibilityLabel(r.result)}`)}
-        onQueue={() => run(`queue-${job.id}`, () => api.queueJob(job.id), 'Added to queue')}
+        onQueue={() => run(`queue-${job.id}`, () => api.queueJob(job.id), 'Added to Ready to apply')}
         onDelete={() => confirm(`Delete ${job.role || 'this job'}${job.company ? ` at ${job.company}` : ''}?`) && run(`delete-${job.id}`, () => api.deleteJob(job.id), 'Job removed')}
         onVote={v => run(`vote-${job.id}`, () => api.voteJob(job.id, job.vote === v ? 0 : v), v > 0 ? 'Noted — similar roles will rank higher' : 'Noted — hidden from Autopilot')}
         onOpenQueue={() => go('Queue')} onOpen={() => openJob(job.id)} />)}</div>
-        : search ? <Empty icon={Search} title="Nothing matches that yet" text="Try fewer words, a region like “Europe”, or follow more companies in Autopilot." />
+        : search ? <Empty icon={Search} title="Nothing matches that yet" text="Try fewer words or a region like “Europe”. Autopilot adds new jobs from across the internet every few hours." />
         : data.jobs.length ? <Empty icon={Search} title="No jobs match this filter" text="Try another filter." />
-        : <Empty icon={Search} title="No internships yet" text="Paste a job link above, or follow companies in Autopilot to find them automatically." action={() => go('Autopilot')} actionLabel="Open Autopilot" />}
+        : <Empty icon={Search} title="No internships yet" text="Turn on Autopilot and it searches job boards worldwide for you, or paste a job link above." action={() => go('Autopilot')} actionLabel="Open Autopilot" />}
     </section>
   </>
 }
@@ -100,19 +101,20 @@ function JobCard({ job, queued, busy, onAnalyze, onQueue, onDelete, onVote, onOp
   return <article className={`job-card ${job.vote === -1 ? 'disliked' : ''} ${job.duplicate_of ? 'duplicate' : ''}`}>
     <JobRow job={job} onClick={onOpen} />
     {job.ai_summary && <p className="ai-line">✦ {job.ai_summary.summary}</p>}
-    <p>{job.description.slice(0, 260) || 'No description was extracted. Add details manually; ApplyPilot will not fabricate them.'}</p>
+    <Tags tags={job.tags} />
+    <p>{job.description.slice(0, 240) || 'Only the title is known so far — open the posting for details. ApplyPilot never makes things up.'}</p>
     <div className="skill-line">{skills.slice(0, 9).map(s => <Badge key={s} tone={match?.strong.includes(s) ? 'good' : match?.missing.includes(s) ? 'bad' : 'neutral'}>{s}</Badge>)}</div>
     {job.eligibility_result && <div className="analysis-box">
-      <div><Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge>{match?.required_coverage != null && <span>{match.required_coverage}% of required skills</span>}{match && match.missing.length > 0 && <span>Missing: {match.missing.join(', ')}</span>}</div>
-      {job.eligibility_checks?.map(c => <small key={c.name}><b className={`check-${c.result.toLowerCase()}`}>{c.name}: {c.result}</b> — {c.explanation}</small>)}
+      <div><Badge tone={eligibilityTone(job.eligibility_result)}>{eligibilityLabel(job.eligibility_result)}</Badge>{match?.required_coverage != null && <span>You have {match.required_coverage}% of the must-have skills</span>}{match && match.missing.length > 0 && <span>Missing: {match.missing.join(', ')}</span>}</div>
+      {job.eligibility_checks && <CheckList checks={job.eligibility_checks.filter(c => c.result !== 'PASS' && c.name !== 'Skills').slice(0, 3)} compact />}
     </div>}
     <footer>
       {job.posting_url && <a className="button ghost icon-only" href={job.posting_url} target="_blank" rel="noreferrer" title="Open posting"><ExternalLink size={15} /></a>}
       <button className="button ghost icon-only" title="Delete job" disabled={busy === `delete-${job.id}`} onClick={onDelete}><Trash2 size={15} /></button>
       <div className="vote small"><button className={job.vote === 1 ? 'on up' : ''} onClick={() => onVote(1)} title="More like this" aria-label="More like this"><ThumbsUp size={14} /></button><button className={job.vote === -1 ? 'on down' : ''} onClick={() => onVote(-1)} title="Not for me" aria-label="Not for me"><ThumbsDown size={14} /></button></div>
       <span className="spacer" />
-      <button className="button ghost" disabled={busy === `analyze-${job.id}`} onClick={onAnalyze}>{busy === `analyze-${job.id}` ? 'Analyzing…' : job.eligibility_result ? 'Re-analyze' : 'Analyze'}</button>
-      {queued ? <button className="button subtle" onClick={onOpenQueue}>In queue</button> : <button className="button primary" disabled={busy === `queue-${job.id}` || job.eligibility_result === 'INELIGIBLE'} title={job.eligibility_result === 'INELIGIBLE' ? 'Blocked: a definite eligibility check failed' : undefined} onClick={onQueue}>Add to queue</button>}
+      <button className="button ghost" disabled={busy === `analyze-${job.id}`} onClick={onAnalyze}>{busy === `analyze-${job.id}` ? 'Checking…' : 'Re-check'}</button>
+      {queued ? <button className="button subtle" onClick={onOpenQueue}>Getting ready</button> : <button className="button primary" disabled={busy === `queue-${job.id}` || job.eligibility_result === 'INELIGIBLE'} title={job.eligibility_result === 'INELIGIBLE' ? 'Something in the posting rules you out' : 'ApplyPilot checks the form and fills what it can'} onClick={onQueue}>Get it ready</button>}
     </footer>
   </article>
 }
