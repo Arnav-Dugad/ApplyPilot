@@ -24,6 +24,7 @@ from . import referrals
 from .safety import TEXT_FACTS, YES_NO_OPTIONS, classify_field, is_yes_no_question, normalize
 from .scoring import job_country, location_match, preferred_locations, score
 from .countries import country_key, country_name
+from . import countries as discovery_countries
 from .student import get as get_fact_value, profile as student_profile
 from .skills import canonical
 
@@ -853,11 +854,18 @@ class Autopilot:
             fact_rows = facts()
             prefs = preferred_locations(fact_rows)
             watch = DB.rows("SELECT * FROM watchlist ORDER BY company")
+            # Country names you'd work in ("India"), used to search big Workday boards for local internships.
+            places = []
+            for place in prefs:
+                code = country_key(place)
+                if code in discovery_countries.COUNTRY_NAMES and (name := discovery_countries.COUNTRY_NAMES[code][0].title()) not in places:
+                    places.append(name)
+            board_kwargs = {"places": places} if fetch is discovery.fetch_board else {}
             event("scan", f"Scanning {len(watch)} job board{'s' if len(watch) != 1 else ''}" if watch else "No companies followed yet — add some in Autopilot to discover jobs automatically")
             new_ids: list[str] = []
             for board in watch:
                 try:
-                    result = fetch(board["platform"], board["slug"], internships_only=cfg["internships_only"])
+                    result = fetch(board["platform"], board["slug"], internships_only=cfg["internships_only"], **board_kwargs)
                 except Exception as exc:
                     DB.execute("UPDATE watchlist SET last_scanned_at=?,last_status=? WHERE id=?", (now(), f"Error: {exc}"[:200], board["id"]))
                     event("scan", f"{board['company']}: {exc}", "WARN", company=board["company"])

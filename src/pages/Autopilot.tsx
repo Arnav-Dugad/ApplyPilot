@@ -18,7 +18,11 @@ export function Autopilot({ data, refresh, go }: PageProps) {
   const running = Boolean(state.running)
   const current = state.runs[0]
   const followed = new Set(data.watchlist.map(w => `${w.platform}:${w.slug.toLowerCase()}`))
-  const catalog = data.catalog.filter(c => !followed.has(`${c.platform}:${c.slug.toLowerCase()}`))
+  const places = ((data.facts.find(f => f.category === 'preferences' && f.fact_key === 'locations' && f.status === 'VERIFIED')?.value as string[] | undefined) ?? []).map(p => p.toLowerCase())
+  const local = (c: { region?: string }) => Boolean(c.region && places.includes(c.region.toLowerCase()))
+  // Companies hiring where you'd work come first.
+  const catalog = data.catalog.filter(c => !followed.has(`${c.platform}:${c.slug.toLowerCase()}`)).sort((a, b) => Number(local(b)) - Number(local(a)))
+  const localCount = catalog.filter(local).length
   const aiReady = Boolean((data.settings.ollama as { provider?: string } | undefined)?.provider === 'OLLAMA')
 
   const save = (patch: Partial<AutopilotConfig>, message?: string) => run('config', () => api.settings({ autopilot: { ...cfg, ...patch } }), message)
@@ -93,8 +97,8 @@ export function Autopilot({ data, refresh, go }: PageProps) {
         <div><b>{w.company}</b><span>{w.platform.toLowerCase()} · {w.internships_seen} internship{w.internships_seen === 1 ? '' : 's'} of {w.jobs_seen}</span><small className={w.last_status?.startsWith('Error') ? 'warn-text' : ''}>{w.last_scanned_at ? `Scanned ${relativeTime(w.last_scanned_at)}` : 'Not scanned yet'}{w.last_status?.startsWith('Error') ? ` · ${w.last_status}` : ''}</small></div>
         <button className="icon-button" aria-label={`Unfollow ${w.company}`} onClick={() => run(`unfollow-${w.id}`, () => api.unfollow(w.id), `Unfollowed ${w.company}`)}><Trash2 /></button>
       </article>)}</div>}
-      {catalog.length > 0 && <><p className="catalog-title">Popular companies with internships · one click to follow</p>
-        <div className="catalog">{catalog.map(c => { const key = `${c.platform.toLowerCase()}:${c.slug}`; return <button key={key} className="catalog-chip" disabled={busy === `follow-${key}`} onClick={() => follow(key, c.company)}>{busy === `follow-${key}` ? <span className="mini-spinner" /> : <Plus size={13} />}{c.company}</button> })}</div></>}
+      {catalog.length > 0 && <><p className="catalog-title">{localCount ? `${localCount} companies hiring in ${catalog.find(local)?.region}, then popular companies worldwide` : 'Popular companies with internships'} · one click to follow</p>
+        <div className="catalog">{catalog.map(c => { const key = `${c.platform.toLowerCase()}:${c.slug}`; return <button key={key} className="catalog-chip" disabled={busy === `follow-${key}`} onClick={() => follow(key, c.company)}>{busy === `follow-${key}` ? <span className="mini-spinner" /> : <Plus size={13} />}{c.company}{local(c) && <em className="catalog-local">{c.region}</em>}</button> })}</div></>}
     </section>
 
     {state.runs.length > 1 && <section className="panel"><div className="panel-head"><div><h2>Run history</h2><p>Recent Autopilot runs</p></div></div>
