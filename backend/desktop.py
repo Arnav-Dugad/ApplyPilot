@@ -190,6 +190,7 @@ def _announce_update() -> None:
     last = DB.setting("last_version")
     if last and last != __version__:
         notify("UPDATE", f"Updated to ApplyPilot {__version__}", f"You were on {last}. See Settings → Updates for what's new.", "Settings")
+        DB.set_setting("whats_new_pending", __version__)  # the UI shows the release notes once
     DB.set_setting("last_version", __version__)
 
 

@@ -58,6 +58,7 @@ SETTING_DEFAULTS: dict[str, Any] = {
     "email_sync": {"enabled": False, "provider": "GMAIL", "host": "imap.gmail.com", "port": 993, "address": "", "secret": None, "last_sync": None, "last_error": None},
     "base_currency": "USD",
     "last_version": None,
+    "whats_new_pending": None,
 }
 
 
